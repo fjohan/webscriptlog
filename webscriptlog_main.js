@@ -599,7 +599,8 @@ function makeFTAnalysis() {
 		}))
 		.sort((a, b) => a.realTime - b.realTime)
 		.map((item, index) => {
-			cumulative += (index + 1) * 1000; // fake/debug time
+			//cumulative += (index + 1) * 1000; // fake/debug time
+			cumulative = index; // fake/debug time
 
 			return {
 				time: item.realTime,        // original timestamp
@@ -608,8 +609,6 @@ function makeFTAnalysis() {
 				text: item.text
 			};
 		});
-
-
 
 	/* Convert to array + (important) sort by time
 	const textData = Object.keys(ftr)
@@ -631,19 +630,48 @@ function makeFTAnalysis() {
 		};
 	});*/
 
+	// Diff logic
+	const textList = [];
+	let currentPosition = 0;
 
-  // Diff logic
-  const textList = [];
-  let currentPosition = 0;
+	const diffSteps = []; // one entry per diff between snapshots
 
-  textData.forEach((item, index) => {
-    if (index === 0) return;
+	textData.forEach((item, index) => {
+		if (index === 0) return;
 
-    const prevText = textData[index - 1].text;
-    const currentText = item.text;
+		const prevText = textData[index - 1].text;
+		const currentText = item.text;
 
-    const diffs = dmp.diff_main(prevText, currentText);
-    dmp.diff_cleanupSemantic(diffs);
+		const diffs = dmp.diff_main(prevText, currentText);
+		dmp.diff_cleanupSemantic(diffs);
+
+		/*let unchangedLen = 0;
+		let insertLen = 0;
+		let deleteLen = 0;
+
+		diffs.forEach(([operation, text]) => {
+			const L = text.length;
+			if (operation === 0) unchangedLen += L;
+			else if (operation === 1) insertLen += L;
+			else if (operation === -1) deleteLen += L;
+		});
+
+		diffSteps.push({
+			time: item.time,                 // real time of this snapshot
+			cumulative: item.cumulative,     // fake/debug time if you want
+			unchangedLen,
+			insertLen,
+			deleteLen
+		});*/
+
+		const chunks = diffs.map(([op, txt]) => ({ op, len: txt.length }))
+			.filter(c => c.len > 0);
+
+		diffSteps.push({
+			time: item.time,
+			cumulative: item.cumulative,
+			chunks
+		});
 
 		//console.log('----------');
 		//console.log(diffs);
@@ -658,7 +686,8 @@ function makeFTAnalysis() {
         const timeUntilNext = (textData[index + 1] ? textData[index + 1].time : item.time) - item.time;
 
         for (const char of text) {
-          textList.splice(currentPosition, 0, [item.time, char, timeSincePrev, timeUntilNext]);
+          //textList.splice(currentPosition, 0, [item.time, char, timeSincePrev, timeUntilNext]);
+          textList.splice(currentPosition, 0, [item.time, item.cumulative, char, timeSincePrev, timeUntilNext]);
           currentPosition++;
         }
       } else if (operation === -1) {
@@ -683,11 +712,12 @@ function makeFTAnalysis() {
   if (tableContainer) tableContainer.innerHTML = "";
 
   reconstructedText = '';
-  textList.forEach(([time, char, timeSincePrev, timeUntilNext]) => {
+  textList.forEach(([time, cumulative, char, timeSincePrev, timeUntilNext]) => {
     const span = document.createElement("span");
     span.textContent = char;
     reconstructedText = reconstructedText + char;
     span.setAttribute("data-time", time);
+    span.setAttribute("data-cumulative", cumulative);
     span.setAttribute("time-bef", timeSincePrev);
     span.setAttribute("time-aft", timeUntilNext);
     contentDiv.appendChild(span);
@@ -701,11 +731,19 @@ function makeFTAnalysis() {
   	console.log('NO MATCH');
   }
 
+  drawCumulativeVsPosition(textList);
+
+  //drawDiffStackedBars(diffSteps, false);
+
+  drawDiffStackedBarsOrdered(diffSteps);
+
   // Hover via delegation
   contentDiv.addEventListener("mouseover", (e) => {
     const span = e.target.closest('#content span[time-bef][time-aft]');
     if (!span) return;
-    labelDiv.textContent = `B: ${span.getAttribute("time-bef")} A: ${span.getAttribute("time-aft")}`;
+    //labelDiv.textContent = `B: ${span.getAttribute("time-bef")} A: ${span.getAttribute("time-aft")}`;
+    labelDiv.textContent = `B: ${span.getAttribute('time-bef')} A: ${span.getAttribute('time-aft')} C: ${span.getAttribute('data-cumulative')}`;
+
   });
 
   contentDiv.addEventListener("mouseout", (e) => {
@@ -800,9 +838,220 @@ function makeFTAnalysis() {
   }
 }
 
+function drawCumulativeVsPosition(textList) {
+  // Create/find canvas
+  let canvas = document.getElementById('linearityPlot');
+  if (!canvas) {
+    canvas = document.createElement('canvas');
+    canvas.id = 'linearityPlot';
+    canvas.width = 1000;
+    canvas.height = 250;
+
+    const contentDiv = document.getElementById('content');
+    contentDiv.parentNode.insertBefore(canvas, contentDiv);
+  }
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const n = textList.length;
+  if (n < 2) return;
+
+  // Extract y values (cumulative)
+  const ys = textList.map(d => d[1]); // [time, cumulative, char, ...]
+  let yMin = Math.min(...ys);
+  let yMax = Math.max(...ys);
+  if (yMin === yMax) yMax = yMin + 1;
+
+  // Plot area padding
+  const padL = 40, padR = 10, padT = 10, padB = 30;
+  const w = canvas.width - padL - padR;
+  const h = canvas.height - padT - padB;
+
+  // Map final position -> x, cumulative -> y
+  const xFor = (i) => padL + (i / (n - 1)) * w;
+  const yFor = (y) => padT + (1 - (y - yMin) / (yMax - yMin)) * h;
+
+  // Axes
+  ctx.beginPath();
+  ctx.moveTo(padL, padT);
+  ctx.lineTo(padL, padT + h);
+  ctx.lineTo(padL + w, padT + h);
+  ctx.stroke();
+
+  // Line plot
+  ctx.beginPath();
+  ctx.moveTo(xFor(0), yFor(ys[0]));
+  for (let i = 1; i < n; i++) {
+    ctx.lineTo(xFor(i), yFor(ys[i]));
+  }
+  ctx.stroke();
+
+  // Simple labels (no styling needed)
+  ctx.fillText('final position →', padL + 5, padT + h + 20);
+  ctx.save();
+  ctx.translate(15, padT + h - 5);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText('cumulative insertion order ↑', 0, 0);
+  ctx.restore();
+}
+
+function drawDiffStackedBarsOrdered(diffSteps) {
+  let canvas = document.getElementById('diffStackedPlot');
+  if (!canvas) {
+    canvas = document.createElement('canvas');
+    canvas.id = 'diffStackedPlot';
+    canvas.width = 1000;
+    canvas.height = 260;
+
+    const contentDiv = document.getElementById('content');
+    contentDiv.parentNode.insertBefore(canvas, contentDiv);
+  }
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const n = diffSteps.length;
+  if (n === 0) return;
+
+  // Total height per bar = sum of all chunk lengths in that diff
+  const totals = diffSteps.map(d => d.chunks.reduce((s, c) => s + c.len, 0));
+  let yMax = Math.max(...totals);
+  if (yMax <= 0) yMax = 1;
+
+  const padL = 45, padR = 10, padT = 10, padB = 30;
+  const W = canvas.width - padL - padR;
+  const H = canvas.height - padT - padB;
+
+  const barW = Math.max(1, Math.floor(W / n));
+  const gap = 1;
+
+  const yFor = (v) => padT + (1 - v / yMax) * H;
+
+  // Axes
+  ctx.beginPath();
+  ctx.moveTo(padL, padT);
+  ctx.lineTo(padL, padT + H);
+  ctx.lineTo(padL + W, padT + H);
+  ctx.stroke();
+
+  // Colors by op
+  const colorFor = (op) => {
+    if (op === 0) return '#000000';  // unchanged
+    if (op === 1) return '#00AA00';  // insertion
+    return '#CC0000';               // deletion (-1)
+  };
+
+  // Bars: stack chunks in the order they appear in diffs
+  for (let i = 0; i < n; i++) {
+    const { chunks } = diffSteps[i];
+    const x = padL + i * barW;
+
+    let acc = 0;
+    for (const ch of chunks) {
+      if (ch.len <= 0) continue;
+
+      const yTop = yFor(acc + ch.len);
+      const yBot = yFor(acc);
+
+      ctx.fillStyle = colorFor(ch.op);
+      ctx.fillRect(x, yTop, Math.max(1, barW - gap), yBot - yTop);
+
+      acc += ch.len;
+    }
+  }
+
+  // Labels
+  ctx.fillStyle = '#000';
+  ctx.fillText('diff step →', padL + 5, padT + H + 20);
+  ctx.save();
+  ctx.translate(15, padT + H - 5);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText('diff chunk length (ordered stack) ↑', 0, 0);
+  ctx.restore();
+}
 
 
 
+
+function _drawDiffStackedBars(diffSteps, useCumulative = false) {
+  // Create/find canvas
+  let canvas = document.getElementById('diffStackedPlot');
+  if (!canvas) {
+    canvas = document.createElement('canvas');
+    canvas.id = 'diffStackedPlot';
+    canvas.width = 1000;
+    canvas.height = 260;
+
+    const contentDiv = document.getElementById('content');
+    contentDiv.parentNode.insertBefore(canvas, contentDiv);
+  }
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const n = diffSteps.length;
+  if (n === 0) return;
+
+  // Y scale based on total stack height
+  const totals = diffSteps.map(d => d.unchangedLen + d.insertLen + d.deleteLen);
+  let yMax = Math.max(...totals);
+  if (yMax <= 0) yMax = 1;
+
+  // Plot area padding
+  const padL = 45, padR = 10, padT = 10, padB = 30;
+  const W = canvas.width - padL - padR;
+  const H = canvas.height - padT - padB;
+
+  // X mapping: evenly spaced bars (simple + fast)
+  const barW = Math.max(1, Math.floor(W / n));
+  const gap = 1;
+
+  const yFor = (v) => padT + (1 - v / yMax) * H; // v in [0..yMax]
+
+  // Axes
+  ctx.beginPath();
+  ctx.moveTo(padL, padT);
+  ctx.lineTo(padL, padT + H);
+  ctx.lineTo(padL + W, padT + H);
+  ctx.stroke();
+
+  // Bars (stacked)
+  for (let i = 0; i < n; i++) {
+    const d = diffSteps[i];
+    const x = padL + i * barW;
+
+    // Stack order (bottom -> top). Choose any; this is a readable one:
+    // unchanged (black) at bottom, then insert (green), then delete (red)
+    const parts = [
+      { val: d.unchangedLen, color: '#000000' }, // 0
+      { val: d.insertLen,    color: '#00AA00' }, // 1
+      { val: d.deleteLen,    color: '#CC0000' }  // -1
+    ];
+
+    let acc = 0;
+    for (const p of parts) {
+      if (p.val <= 0) continue;
+      const yTop = yFor(acc + p.val);
+      const yBot = yFor(acc);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(x, yTop, Math.max(1, barW - gap), yBot - yTop);
+      acc += p.val;
+    }
+  }
+
+  // Minimal labels
+  const xLabel = useCumulative ? 'cumulative step →' : 'diff step →';
+  ctx.fillStyle = '#000';
+  ctx.fillText(xLabel, padL + 5, padT + H + 20);
+  ctx.save();
+  ctx.translate(15, padT + H - 5);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText('diff chunk length ↑', 0, 0);
+  ctx.restore();
+}
+
+/*
 function _scriptlogram() {
   messages.value += 'scriptlogram!\n';
   const dmp = new diff_match_patch();
@@ -827,7 +1076,7 @@ const textData = Object.keys(text_record).map((key, index) => {
         length: text_record[key].length,
         text: text_record[key]
     };
-});*/
+});/*
 
 
   // Diff logic
@@ -890,7 +1139,7 @@ const textData = Object.keys(text_record).map((key, index) => {
     });
     span.addEventListener('mouseleave', function() {
       labelDiv.textContent = 'Time: -'; // Clear label on mouse leave
-    });*/
+    });*
     contentDiv.appendChild(span);
   });
 
@@ -1000,6 +1249,7 @@ const textData = Object.keys(text_record).map((key, index) => {
     return range.toString().length;
   }
 }
+*/
 
 function inspectRecords() {
   for (var k in header_record) {
