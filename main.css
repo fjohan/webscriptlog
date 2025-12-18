@@ -141,7 +141,7 @@
 /* =========================
    Revision table
    ========================= */
-table {
+table#sentenceDiffTable {
   border-collapse: collapse;
   width: 80%;
   margin-top: 20px;
@@ -343,6 +343,7 @@ th{
   background: #f3f6fb;
 }
 
+/* final text table */
 #content {
 	width: 60%;
 	height: 400px;
@@ -362,16 +363,17 @@ th{
 #table-container {
 	margin-top: 20px;
 }
-table {
+table#table-container {
 	width: 100%;
 	border-collapse: collapse;
 }
-th, td {
+th#table-container,
+td#table-container {
 	border: 1px solid #ddd;
 	padding: 8px;
 	text-align: left;
 }
-th {
+th#table-container {
 	background-color: #f4f4f4;
 }
 
