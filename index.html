@@ -1,0 +1,180 @@
+<!--?php
+// Initialize the session
+session_start();
+ 
+// Check if the user is logged in, if not then redirect him to login page
+if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
+    header("location: login.php");
+    exit;
+}
+?-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+<link rel="stylesheet" href="main.css">
+<title>ScriptLog.js</title>
+<script type="text/javascript" src="fetchToZip.js"></script>
+<script type="text/javascript" src="fetchFinalTextsToZip.js"></script>
+<script type="text/javascript" src="i18n.js"></script>
+<script type="text/javascript" src="webscriptlog_main.js"></script>
+<script type="text/javascript" src="ui.js"></script>
+<script type="text/javascript" src="helpers_js/idbStore.js"></script>
+<script type="text/javascript" src="ext_js/diff_match_patch.js"></script>
+<script type="text/javascript" src="ext_js/FileSaver.js"></script>
+<script type="text/javascript" src="ext_js/d3.min.js"></script>
+<script type="text/javascript" src="ext_js/jszip.min.js"></script>
+<script type="text/javascript" src="ext_js/pako.min.js"></script>
+<script type="text/javascript" src="ext_js/jquery-3.3.1.min.js"></script>
+</head>
+
+<body onload="init()">
+
+  <!-- Optional language picker -->
+
+  <div id="tabs"></div>
+
+  <!-- RECORD -->
+  <template id="panel-RECORD">
+    <div id="recorderFrame">
+      <textarea
+        data-i18n-attr="placeholder:ph.recorder"
+        style="vertical-align: text-top;"
+        id="recorder"
+        rows="10"
+        cols="80"></textarea>
+    </div>
+
+    <div id="recorderButtons">
+      <span style="display: inline-block; width: 200px; vertical-align: text-top;">
+        <span class="sidLabel"></span>
+        <p>
+          <b data-i18n="label.code"></b>
+          <span data-i18n="label.codeHelp"></span>
+        </p>
+
+        <input
+          style="width: 80px; font-family: monospace; font-size: 18px;"
+          type="text"
+          id="userCode"
+          maxlength="6"
+          autocomplete="false"
+          autocorrect="false"
+          spellcheck="false"
+          oninput="checkUserCode(this)"
+          autofocus
+        />
+
+        <div data-role="btnbar"></div>
+
+        <br />
+        <span id="messageLabel"></span>
+      </span>
+    </div>
+  </template>
+
+  <!-- REPLAY -->
+  <template id="panel-REPLAY">
+    <div id="replayFrame">
+      <textarea style="vertical-align: text-top;" id="playback" rows="10" cols="80"></textarea>
+    </div>
+
+    <div id="replayButtons">
+      <span style="display: inline-block; width: 200px; vertical-align: text-top;">
+        <span class="sidLabel"></span>
+
+        <div data-role="btnbar"></div>
+
+        <span id="innerH" data-i18n="label.indexeddb"></span>
+        <select style="vertical-align: text-top;" id="lb_load" name="lb" size="10"></select>
+
+        <div style="display:none;" id="div_fetch">
+          <span data-i18n="label.start"></span>
+          <input type="number" id="startlimit" value="0" min="0" max="1000" />
+          <br />
+          <span data-i18n="label.end"></span>
+          <input type="number" id="endlimit" value="5" min="0" max="1000" />
+        </div>
+
+				<p></p>
+        <span data-i18n="label.selectFile"></span>
+        <input style="margin: 10px;" type="file" accept="text/plain" onchange="openFile(event)" /><br />
+      </span>
+    </div>
+
+    <h3 data-i18n="heading.revisionTable"></h3>
+    <p>
+      <span id="revisionoutput">...</span>
+      <table id="sentenceDiffTable">
+        <thead>
+          <tr>
+            <th data-i18n="th.rowNumber"></th>
+            <th data-i18n="th.localDiff"></th>
+            <th data-i18n="th.classification"></th>
+            <th data-i18n="th.location"></th>
+            <th data-i18n="th.newGroup"></th>
+            <th data-i18n="th.groupDiff"></th>
+            <th data-i18n="th.timeSeconds"></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </p>
+  </template>
+
+  <!-- ANALYZE -->
+  <template id="panel-ANALYZE">
+    <h3 data-i18n="heading.infoWindow"></h3>
+    <p>
+      <textarea style="vertical-align: text-top;" id="messages" rows="10" cols="80"></textarea>
+      <span style="vertical-align: text-top; display:inline-block;">
+        <div data-role="btnbar"></div>
+      </span>
+    </p>
+
+    <h3 data-i18n="heading.ftAnalysis"></h3>
+    <p><div id="ftAnalysis">
+      <div id="label">Time: -</div>
+      <div id="content"></div>
+      <button id="generate-table">Generate Table</button>
+      <div id="table-container"></div>
+    </div></p>
+
+    <h3 data-i18n="heading.linData"></h3>
+    <p><span id="linoutput">...</span></p>
+
+    <h3 data-i18n="heading.progressGraph"></h3>
+    <p><svg width="960" height="500"></svg></p>
+  </template>
+
+  <template id="panel-SETTINGS">
+    <h3 data-i18n="heading.settings"></h3>
+
+    <p>
+    <label for="lang" style="margin-right:8px;" data-i18n="ui.language"></label>
+    <select id="lang">
+      <option value="sv">Svenska</option>
+      <option value="en">English</option>
+    </select>
+    </p>
+
+    <!-- keep a btnbar marker for consistency, even if empty -->
+    <div data-role="btnbar"></div>
+  </template>
+
+
+  <script>
+
+
+
+  </script>
+</body>
+
+
+
+
+
+
+</html>
+
