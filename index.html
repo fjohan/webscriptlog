@@ -38,51 +38,52 @@ if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
 
   <!-- RECORD -->
   <template id="panel-RECORD">
-    <div id="recorderFrame">
-      <textarea
-        data-i18n-attr="placeholder:ph.recorder"
-        style="vertical-align: text-top;"
-        id="recorder"
-        rows="10"
-        cols="80"></textarea>
-    </div>
 
-    <div id="recorderButtons">
-      <span style="display: inline-block; width: 200px; vertical-align: text-top;">
-        <span class="sidLabel"></span>
-        <p>
-          <b data-i18n="label.code"></b>
-          <span data-i18n="label.codeHelp"></span>
-        </p>
+		<div class="pane-split">
+			<div class="pane-main" id="recorderFrame">
+				<textarea
+						data-i18n-attr="placeholder:ph.recorder"
+						style="vertical-align: text-top;"
+						id="recorder"
+						rows="10"
+						cols="80"></textarea>
+			</div>
 
-        <input
-          style="width: 80px; font-family: monospace; font-size: 18px;"
-          type="text"
-          id="userCode"
-          maxlength="6"
-          autocomplete="false"
-          autocorrect="false"
-          spellcheck="false"
-          oninput="checkUserCode(this)"
-          autofocus
-        />
+			<div class="pane-side" id="recorderButtons">
+				<span class="sidLabel"></span>
+				<p>
+				<b data-i18n="label.code"></b>
+				<span data-i18n="label.codeHelp"></span>
+				</p>
 
-        <div data-role="btnbar"></div>
+				<input
+						style="width: 80px; font-family: monospace; font-size: 18px;"
+						type="text"
+						id="userCode"
+						maxlength="6"
+						autocomplete="false"
+						autocorrect="false"
+						spellcheck="false"
+						oninput="checkUserCode(this)"
+						autofocus
+						/>
 
-        <br />
-        <span id="messageLabel"></span>
-      </span>
-    </div>
-  </template>
+				<div data-role="btnbar"></div>
+
+				<br />
+				<span id="messageLabel"></span>
+			</div>
+		</div>
+	</template>
 
   <!-- REPLAY -->
   <template id="panel-REPLAY">
-    <div id="replayFrame">
-      <textarea style="vertical-align: text-top;" id="playback" rows="10" cols="80"></textarea>
-    </div>
+		<div class="pane-split">
+			<div class="pane-main" id="replayFrame">
+				<textarea style="vertical-align: text-top;" id="playback" rows="10" cols="80"></textarea>
+			</div>
 
-    <div id="replayButtons">
-      <span style="display: inline-block; width: 200px; vertical-align: text-top;">
+			<div class="pane-side" id="replayButtons">
         <span class="sidLabel"></span>
 
         <div data-role="btnbar"></div>
@@ -101,8 +102,8 @@ if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
 				<p></p>
         <span data-i18n="label.selectFile"></span>
         <input style="margin: 10px;" type="file" accept="text/plain" onchange="openFile(event)" /><br />
-      </span>
-    </div>
+			</div>
+		</div>
 
     <h3 data-i18n="heading.revisionTable"></h3>
     <p>

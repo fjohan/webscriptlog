@@ -1,199 +1,5 @@
 /* =========================
-   Tabs (no jQuery)
-   ========================= */
-#tabs {
-  font-family: system-ui, sans-serif;
-}
-
-#tabs .tabbar {
-  display: flex;
-  gap: 6px;
-  padding: 0;
-  margin: 0 0 10px 0;
-  list-style: none;
-}
-
-#tabs .tabbar button {
-  cursor: pointer;
-  padding: 8px 12px;
-  border: 1px solid #ccc;
-  background: #f6f6f6;
-  border-radius: 6px;
-}
-
-#tabs .tabbar button[aria-selected="true"] {
-  background: #fff;
-}
-
-#tabs .panel {
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  padding: 12px;
-  display: none;
-}
-
-#tabs .panel.is-active {
-  display: block;
-}
-
-
-/* =========================
-   Textareas / Frames
-   ========================= */
-#recorder,
-#playback {
-  width: 1024px;
-  height: 768px;
-
-  padding: 12px 20px;
-  box-sizing: border-box;
-
-  border: 2px solid #ccc;
-  border-radius: 4px;
-
-  background-color: #f8f8f8;
-  font-size: 1.5em;
-  line-height: 200%;
-
-  resize: none;
-  overflow-y: scroll;
-
-  box-shadow: inset 2px 2px 2px 0px #dddddd;
-}
-
-#recorderFrame,
-#replayFrame {
-  width: 1024px;
-}
-
-#recorderFrame,
-#recorderButtons,
-#replayFrame,
-#replayButtons {
-  display: inline-block;
-  vertical-align: top;
-}
-
-
-/* =========================
-   Buttons
-   ========================= */
-.sl_button {
-  width: 120px;       /* adjust global default here */
-  height: 44px;
-  margin: 10px;       /* default spacing outside row layout */
-  color: #000;        /* prefer color over -webkit-text-fill-color */
-}
-
-.sl_button:disabled {
-  color: #777;
-}
-
-/* Buttons that require dblclick */
-.sl_button.dblclick {
-  box-shadow: inset 0 0 0 3px rgba(0,0,0,0.65);
-}
-
-
-/* =========================
-   Button row layout
-   ========================= */
-.btn-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 6px;
-}
-
-.btn-row {
-  display: flex;
-  flex-direction: row;
-  gap: 10px;
-  align-items: center;
-}
-
-/* Override per-button margin inside row layout */
-.btn-row .sl_button {
-  margin: 0;
-  min-width: 150px;  /* wider in rows */
-}
-
-/* Optional spacing between groups */
-.btn-spacer {
-  height: 10px;
-}
-
-
-/* =========================
-   Misc UI bits
-   ========================= */
-#innerH {
-  font-size: 1.17em;
-  margin: 1em 0 1em 10px;
-  font-weight: bold;
-}
-
-#lb_load {
-  margin: 10px;
-}
-
-
-/* =========================
-   Revision table
-   ========================= */
-table#sentenceDiffTable {
-  border-collapse: collapse;
-  width: 80%;
-  margin-top: 20px;
-}
-
-th, td {
-  border: 1px solid #ddd;
-  padding: 8px;
-  text-align: left;
-  white-space: pre-wrap;
-}
-
-th {
-  background-color: #f2f2f2;
-}
-
-.insert  { color: green; }
-.delete  { color: red; }
-.replace { color: orange; }
-.nochange { color: gray; }
-
-.new-group { background-color: lightblue; }
-
-.last-in-group { background-color: lightgrey; }
-.last-in-group:hover { background-color: bisque; }
-.last-in-group:active { background-color: white; }
-
-.second-diff { background-color: lightgreen; }
-
-
-/* =========================
-   Graph styles (keep only if used)
-   ========================= */
-.line {
-  fill: none;
-  stroke: steelblue;
-  stroke-width: 2px;
-}
-
-.grid line {
-  stroke: lightgrey;
-  stroke-opacity: 0.7;
-  shape-rendering: crispEdges;
-}
-
-.grid path {
-  stroke-width: 0;
-}
-
-
-/* =========================
-   Subtle theme: soft, not wild
+   Theme tokens
    ========================= */
 :root{
   --bg: #f6f7fb;
@@ -203,33 +9,46 @@ th {
   --muted: #6b7280;
   --shadow: 0 10px 20px rgba(0,0,0,.06);
   --shadow-sm: 0 2px 8px rgba(0,0,0,.06);
-  --focus: rgba(59,130,246,.35); /* soft blue ring */
-  --accent: #3b82f6;      /* calm blue (Tailwind blue-500) */
-  --accent-soft: rgba(59,130,246,.15);
+  --focus: rgba(59,130,246,.35);
+  --accent: #3b82f6;
 }
-
-/* #2563eb for deeper blue, or #10b981 for green */
 
 body{
   background: var(--bg);
   color: var(--text);
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 }
 
-/* Tabs container/panels */
-#tabs .panel{
-  background: var(--panel);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
+/* =========================
+   Tabs (no jQuery)
+   IMPORTANT: panels must remain display:none unless active
+   ========================= */
+#tabs{
+  margin: 10px;
 }
 
-/* Tab bar: looks like segmented controls */
 #tabs .tabbar{
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
+  padding: 0;
+  margin: 0 0 10px 0;
+  list-style: none;
 }
 
 #tabs .tabbar button{
-  background: rgba(255,255,255,.75);
+  -webkit-appearance: none;
+  appearance: none;
+
+  position: relative;
+  cursor: pointer;
+  padding: 10px 12px;
+
   border: 1px solid var(--border);
+  background: rgba(255,255,255,.75);
+  border-radius: 10px;
+
   box-shadow: var(--shadow-sm);
   transition: transform .06s ease, box-shadow .15s ease, background-color .15s ease;
 }
@@ -238,15 +57,16 @@ body{
   transform: translateY(-1px);
 }
 
+#tabs .tabbar button:focus-visible{
+  outline: none;
+  box-shadow: 0 0 0 4px var(--focus), var(--shadow-sm);
+}
+
+/* active tab */
 #tabs .tabbar button[aria-selected="true"]{
   background: var(--panel);
   box-shadow: var(--shadow);
   border-color: rgba(59,130,246,.45);
-}
-
-/* Active tab underline */
-#tabs .tabbar button{
-  position: relative;
 }
 
 #tabs .tabbar button[aria-selected="true"]::after{
@@ -260,14 +80,128 @@ body{
   background: var(--accent);
 }
 
+/* Panel visibility (tab logic relies on this) */
+#tabs .panel{
+  display: none;              /* MUST stay */
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: var(--shadow);
+}
 
+#tabs .panel.is-active{
+  display: block;
+}
 
-/* Buttons */
+/* =========================
+   Split layout wrapper (you add this in templates)
+   Use in RECORD and REPLAY templates like:
+   <div class="pane-split">
+     <div id="recorderFrame">...</div>
+     <div id="recorderButtons">...</div>
+   </div>
+   ========================= */
+.pane-split{
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+/* Left column grows, right column stays narrower */
+/* hard-code if you want same width of rec and repl */
+.pane-split > .pane-main{
+  /*flex: 1 1 auto;*/
+  flex: 0 0 800px;
+  width: 800px;
+  min-width: 320px;
+}
+
+/* this is were you give more space to the button area */
+.pane-split > .pane-side{
+  flex: 0 0 400px;
+  width: 400px;
+}
+
+/* Stack on smaller/portrait screens */
+@media (max-width: 900px){
+  .pane-split{
+    flex-direction: column;
+  }
+  .pane-split > .pane-side{
+    width: 100%;
+    flex: 0 0 auto;
+  }
+}
+
+/* =========================
+   Textareas
+   - No fixed 1024px widths; fill their container
+   ========================= */
+#recorder,
+#playback,
+#messages{
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+
+  padding: 12px 20px;
+  border: 2px solid var(--border);
+  /*border-radius: 10px;*/
+
+  background: #fbfcfe;
+  font-size: 1.05rem;
+  line-height: 1.7;
+
+  resize: none;
+  overflow-y: scroll;
+
+  box-shadow: inset 0 2px 6px rgba(0,0,0,.06);
+}
+
+#recorder:focus,
+#playback:focus,
+#messages:focus{
+  outline: none;
+  box-shadow: 0 0 0 4px var(--focus), inset 0 2px 6px rgba(0,0,0,.06);
+}
+
+/* Big writing areas */
+#recorder,
+#playback{
+  height: min(70vh, 780px);
+  min-height: 360px;
+}
+
+/* Analysis/messages area smaller by default */
+#messages{
+  height: min(45vh, 520px);
+  min-height: 220px;
+}
+
+/* Keep frames fluid */
+#recorderFrame,
+#replayFrame{
+  width: auto;
+}
+
+/* =========================
+   Buttons
+   ========================= */
 .sl_button{
+  -webkit-appearance: none;
+  appearance: none;
+
+  width: 120px;          /* base width */
+  height: 44px;
+
   border: 1px solid var(--border);
   background: linear-gradient(#ffffff, #f1f3f7);
   border-radius: 10px;
+
+  color: var(--text);
   box-shadow: var(--shadow-sm);
+
   transition: transform .06s ease, box-shadow .15s ease, background-color .15s ease;
 }
 
@@ -282,20 +216,18 @@ body{
   box-shadow: 0 3px 8px rgba(0,0,0,.10);
 }
 
-.sl_button:focus-visible,
-#tabs .tabbar button:focus-visible{
+.sl_button:focus-visible{
   outline: none;
   box-shadow: 0 0 0 4px var(--focus), var(--shadow-sm);
 }
 
-/* Disabled buttons: still looks intentional */
 .sl_button:disabled{
   background: #f3f4f6;
   color: var(--muted);
   box-shadow: none;
 }
 
-/* Double-click buttons: subtle inner ring + small badge */
+/* Double-click buttons: inner ring + badge */
 .sl_button.dblclick{
   position: relative;
   box-shadow: inset 0 0 0 2px rgba(17,24,39,.55), var(--shadow-sm);
@@ -309,71 +241,179 @@ body{
   font-size: 11px;
   line-height: 1;
   padding: 2px 6px;
-  border: 1px solid rgba(17,24,39,.25);
+  border: 1px solid rgba(17,24,39,.45);
   border-radius: 999px;
-  background: rgba(255,255,255,.85);
+  background: rgba(255,255,255,.18);
+  color: rgba(17,24,39,.4);
+}
+
+.sl_button.dblclick:hover::after,
+.sl_button.dblclick:focus-visible::after{
+  background: rgba(255,255,255,.9);
+  border-color: rgba(17,24,39,.45);
   color: rgba(17,24,39,.8);
 }
 
-/* Textareas: slightly softer + clearer focus */
-#recorder,
-#playback{
-  background: #fbfcfe;
-  border-color: var(--border);
-  box-shadow: inset 0 2px 6px rgba(0,0,0,.06);
+/* =========================
+   Button row layout (your post-UI layout helpers use these)
+   ========================= */
+.btn-grid{
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
 }
 
-#recorder:focus,
-#playback:focus{
-  outline: none;
-  box-shadow: 0 0 0 4px var(--focus), inset 0 2px 6px rgba(0,0,0,.06);
+.btn-row{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
 }
 
-/* Table: a bit more airy */
-table{
+/* Buttons inside row layouts: no outer margins + wider min-width */
+.btn-row .sl_button{
+  margin: 0;
+  min-width: 120px;
+}
+
+/* Optional spacing between groups */
+.btn-spacer{
+  height: 10px;
+}
+
+/* =========================
+   Misc UI bits
+   ========================= */
+#innerH{
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 12px 0 8px 0;
+  border-left: 4px solid rgba(59,130,246,.15);
+  padding-left: 8px;
+}
+
+#lb_load{
+  margin: 10px 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+/* =========================
+   Tables
+   - Scope styles to specific tables/containers
+   ========================= */
+
+/* Revision diff table only */
+#sentenceDiffTable{
+  width: 60%;
+  border-collapse: collapse;
+  margin-top: 16px;
+
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
-  overflow: hidden; /* rounds header corners */
+  overflow: hidden;
   box-shadow: var(--shadow-sm);
 }
 
-th{
-  color: var(--text);
-  background: #f3f6fb;
+#sentenceDiffTable th,
+#sentenceDiffTable td{
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+  white-space: pre-wrap;
 }
 
-/* final text table */
-#content {
-	width: 60%;
-	height: 400px;
-	border: 1px solid #ccc;
-	padding: 10px;
-	margin-top: 20px;
-	overflow-y: auto;
-	white-space: pre-wrap; /* Handle spaces and new lines correctly */
+#sentenceDiffTable th{
+  background: #f3f6fb;
+  color: var(--text);
 }
-.newspan {
-	border: 2px solid #000;
-	padding: 0 2px;
-	margin: 0;
-	display: inline;
-	position: relative;
+
+/* Your diff coloring classes */
+.insert  { color: green; }
+.delete  { color: red; }
+.replace { color: orange; }
+.nochange { color: gray; }
+
+.new-group { background-color: lightblue; }
+
+.last-in-group { background-color: lightgrey; }
+.last-in-group:hover { background-color: bisque; }
+.last-in-group:active { background-color: white; }
+
+.second-diff { background-color: lightgreen; }
+
+/* Final-text analysis: container + table inside it */
+#content{
+  width: 60%;
+  max-width: 60rem;     /* better than 60% for responsive */
+  height: 400px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  margin-top: 16px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
 }
-#table-container {
-	margin-top: 20px;
+
+#table-container{
+  margin-top: 16px;
+  overflow-x: auto;     /* allow horizontal scroll on small screens */
 }
-table#table-container {
-	width: 100%;
-	border-collapse: collapse;
+
+#table-container table{
+  width: 40%;
+  border-collapse: collapse;
+
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
-th#table-container,
-td#table-container {
-	border: 1px solid #ddd;
-	padding: 8px;
-	text-align: left;
+
+#table-container th,
+#table-container td{
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: left;
+  white-space: normal;
 }
-th#table-container {
-	background-color: #f4f4f4;
+
+#table-container th{
+  background: #f3f6fb;
+  color: var(--text);
+}
+
+/* Highlight span used in final-text analysis */
+.newspan{
+  border: 2px solid #000;
+  padding: 0 2px;
+  margin: 0;
+  display: inline;
+  position: relative;
+}
+
+/* =========================
+   Graph styles (keep only if used by your SVG)
+   ========================= */
+.line{
+  fill: none;
+  stroke: steelblue;
+  stroke-width: 2px;
+}
+
+.grid line{
+  stroke: lightgrey;
+  stroke-opacity: 0.7;
+  shape-rendering: crispEdges;
+}
+
+.grid path{
+  stroke-width: 0;
 }
 

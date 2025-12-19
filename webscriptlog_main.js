@@ -581,6 +581,78 @@ function makeLINfile() {
   //messages.value += linfile + '\n';
 }
 
+/* the following three should allow for saving+reapplying ranges */
+function getHighlightedCharSpans() {
+  return Array.from(
+    document.querySelectorAll('#content span[time-bef][time-aft]')
+  );
+}
+
+function saveAllHighlights() {
+  const wrappers = Array.from(document.querySelectorAll('#content .newspan'));
+  const allChars = getHighlightedCharSpans();
+
+  const ranges = wrappers.map(wrapper => {
+    const chars = wrapper.querySelectorAll('span[time-bef][time-aft]');
+    if (!chars.length) return null;
+
+    const start = allChars.indexOf(chars[0]);
+    const end = allChars.indexOf(chars[chars.length - 1]) + 1;
+
+    if (start < 0 || end <= start) return null;
+
+    return { start, end };
+  }).filter(Boolean);
+
+  return ranges;
+}
+
+function applyAllHighlights(ranges) {
+  if (!Array.isArray(ranges) || ranges.length === 0) return;
+
+  // Flattened character stream in document order (works even if some are already wrapped)
+  const spans = Array.from(document.querySelectorAll('#content span[time-bef][time-aft]'));
+  if (spans.length === 0) return;
+
+  // 1) (Optional but recommended) unwrap existing highlights first
+  //    so indices refer to the plain character stream
+  const existing = Array.from(document.querySelectorAll('#content .newspan'));
+  for (const wrapper of existing) {
+    const parent = wrapper.parentNode;
+    while (wrapper.firstChild) parent.insertBefore(wrapper.firstChild, wrapper);
+    parent.removeChild(wrapper);
+  }
+
+  // Recompute after unwrapping (DOM changed)
+  const flat = Array.from(document.querySelectorAll('#content span[time-bef][time-aft]'));
+
+  // 2) Normalize + sort descending so wrapping doesn't shift later indices
+  const normalized = ranges
+    .map(r => ({
+      start: Math.max(0, Math.min(r.start, flat.length)),
+      end: Math.max(0, Math.min(r.end, flat.length))
+    }))
+    .map(r => (r.start <= r.end ? r : ({ start: r.end, end: r.start })))
+    .filter(r => r.end > r.start)
+    .sort((a, b) => b.start - a.start);
+
+  // 3) Wrap each range
+  for (const r of normalized) {
+    const startSpan = flat[r.start];
+    const endSpan = flat[r.end - 1];
+    if (!startSpan || !endSpan) continue;
+
+    const range = document.createRange();
+    range.setStartBefore(startSpan);
+    range.setEndAfter(endSpan);
+
+    const wrapper = document.createElement('span');
+    wrapper.className = 'newspan';
+    wrapper.appendChild(range.extractContents());
+    range.insertNode(wrapper);
+  }
+}
+
 function makeFTAnalysis() {
   const dmp = new diff_match_patch();
 
@@ -739,6 +811,9 @@ function makeFTAnalysis() {
   //drawDiffStackedBarsOrdered(diffSteps);
   //drawDiffStackedBarsOrderedD3(diffSteps);
 
+	// this loads any existing spans from localStorage
+	loadHighlightsFromLocalStorage();
+
   // Hover via delegation
   contentDiv.addEventListener("mouseover", (e) => {
     const span = e.target.closest('#content span[time-bef][time-aft]');
@@ -808,7 +883,37 @@ function makeFTAnalysis() {
     btn.addEventListener("click", generateTable);
   }
 
+	function saveHighlightsToLocalStorage() {
+		const key = lb_load.options[lb_load.selectedIndex].text; // your text id
+		const ranges = saveAllHighlights(); // returns [{start,end}, ...]
+		const storageKey = `highlights:${key}`;
+
+		localStorage.setItem(storageKey, JSON.stringify(ranges));
+	}
+
+	function loadHighlightsFromLocalStorage() {
+		const key = lb_load.options[lb_load.selectedIndex].text;
+		const storageKey = `highlights:${key}`;
+
+		const raw = localStorage.getItem(storageKey);
+		if (!raw) return;
+
+		let ranges;
+		try {
+			ranges = JSON.parse(raw);
+		} catch {
+			return;
+		}
+
+		applyAllHighlights(ranges);
+	}
+
+
+
   function generateTable() {
+    // save highlights to localStorage
+		saveHighlightsToLocalStorage();
+
     const container = document.getElementById("content");
     const wrappers = container.getElementsByClassName("newspan");
     const tableContainer = document.getElementById("table-container");
@@ -1616,189 +1721,6 @@ async function getJsonFromIDB(key) {
 var sid;
 var getdataphp = "php/getdata.php";
 
-/*
-function initUI() {
-  const tabsRoot = document.getElementById("tabs");
-
-  const tabbar = document.createElement("ul");
-  tabbar.className = "tabbar";
-  tabbar.setAttribute("role", "tablist");
-
-  const panelsWrap = document.createElement("div");
-
-  const tabButtonsByName = new Map();
-  const panelsByName = new Map();
-  const buttonBarByTab = new Map(); // tabName -> btnbar element found in cloned template
-
-  UI.forEach(([tabName], idx) => {
-    // Tab button
-    const li = document.createElement("li");
-    const tabBtn = document.createElement("button");
-    tabBtn.type = "button";
-    tabBtn.textContent = tabName;
-    tabBtn.id = `tab-${idx}`;
-    tabBtn.setAttribute("role", "tab");
-    tabBtn.setAttribute("aria-controls", `panel-${idx}`);
-    tabBtn.setAttribute("aria-selected", "false");
-    tabBtn.addEventListener("click", () => activateTab(tabName));
-    li.appendChild(tabBtn);
-    tabbar.appendChild(li);
-    tabButtonsByName.set(tabName, tabBtn);
-
-    // Panel from template
-    const tpl = document.getElementById(`panel-${tabName}`);
-    const panel = document.createElement("div");
-    panel.className = "panel";
-    panel.id = `panel-${idx}`;
-    panel.setAttribute("role", "tabpanel");
-    panel.setAttribute("aria-labelledby", tabBtn.id);
-
-    if (!tpl) {
-      panel.innerHTML = `<p>(Missing template for ${tabName})</p>`;
-    } else {
-      panel.appendChild(tpl.content.cloneNode(true));
-
-      // Find this tab's button bar dynamically
-      const btnbar = panel.querySelector('[data-role="btnbar"]');
-      if (!btnbar) {
-        console.warn(`Tab "${tabName}" template has no [data-role="btnbar"] container`);
-      } else {
-        buttonBarByTab.set(tabName, btnbar);
-      }
-    }
-
-    panelsWrap.appendChild(panel);
-    panelsByName.set(tabName, panel);
-  });
-
-  tabsRoot.appendChild(tabbar);
-  tabsRoot.appendChild(panelsWrap);
-
-  // Create + bind buttons from UI into dynamically found bars
-  for (const [tabName, buttons] of UI) {
-    const bar = buttonBarByTab.get(tabName);
-    if (!bar) continue;
-
-    for (const [label, id, handler, eventType = "click"] of buttons) {
-      const btn = document.createElement("button");
-      btn.className = "sl_button";
-      btn.type = "button";
-      btn.id = id;
-      btn.textContent = label;
-
-      btn.addEventListener(eventType, handler, false);
-      bar.appendChild(btn);
-
-      // Optional: keep compatibility with old code that expects globals
-      window[id] = btn;
-    }
-  }
-
-
-  function moveButtonsTo(containerId, buttonIds) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-
-    buttonIds.forEach(id => {
-      const btn = document.getElementById(id);
-      if (btn) container.appendChild(btn);
-    });
-  }
-
-
-	function layoutButtonsInRows(containerEl, rows, { spacerAfterRowIndexes = [] } = {}) {
-		if (!containerEl) return;
-
-		const grid = document.createElement("div");
-		grid.className = "btn-grid";
-
-		rows.forEach((rowIds, idx) => {
-			const row = document.createElement("div");
-			row.className = "btn-row";
-
-			rowIds.forEach(id => {
-				const btn = document.getElementById(id);
-				if (btn) row.appendChild(btn);
-			});
-
-			grid.appendChild(row);
-
-			if (spacerAfterRowIndexes.includes(idx)) {
-				const spacer = document.createElement("div");
-				spacer.className = "btn-spacer";
-				grid.appendChild(spacer);
-			}
-		});
-
-		// Replace existing contents with the new grid layout
-		containerEl.innerHTML = "";
-		containerEl.appendChild(grid);
-	}
-
-	function markDoubleClickButtonsFromUI(UI) {
-		const dblIds = new Set();
-
-		for (const [, buttons] of UI) {
-			for (const spec of buttons) {
-				const eventType = spec[3] ?? "click";
-				if (eventType === "dblclick") dblIds.add(spec[1]); // spec[1] is id
-			}
-		}
-
-		dblIds.forEach(id => {
-			const btn = document.getElementById(id);
-			if (!btn) return;
-
-			btn.classList.add("dblclick");
-
-			// Optional: make it discoverable on hover
-			const t = (btn.getAttribute("title") || "").trim();
-			const hint = "Double-click";
-			btn.setAttribute("title", t ? `${t} (${hint})` : hint);
-		});
-	}
-
-	// 1) Move FETCH buttons into div_fetch (you already do this)
-	moveButtonsTo("div_fetch", [
-		"b_fetch",
-		"b_fetchplus",
-		"b_fetchtozip",
-		"b_fetchfttozip"
-	]);
-
-	// 2) Layout UPPSPELNING buttons into rows (main area)
-	const playbackBar = buttonBarByTab.get("REPLAY"); // from your dynamic mapping
-	layoutButtonsInRows(playbackBar, [
-		["b_replay", "b_fastforward", "b_repstop"],
-		["b_loadls"],
-		["b_clear", "b_clearall"],
-		["b_download", "b_downloadft"],
-	], {
-		spacerAfterRowIndexes: [3] // optional; doesn't matter much here since fetch group is elsewhere
-	});
-
-	// 3) Layout FETCH area into rows (inside div_fetch)
-	const divFetch = document.getElementById("div_fetch");
-	layoutButtonsInRows(divFetch, [
-		["b_fetch", "b_fetchplus"],
-		["b_fetchtozip", "b_fetchfttozip"],
-	]);
-
-	// 4) Mark dblclick buttons (inner border + tooltip)
-	markDoubleClickButtonsFromUI(UI);
-
-  activateTab(UI[0]?.[0]);
-
-  function activateTab(tabName) {
-    for (const [name, panel] of panelsByName) {
-      panel.classList.toggle("is-active", name === tabName);
-    }
-    for (const [name, btn] of tabButtonsByName) {
-      btn.setAttribute("aria-selected", name === tabName ? "true" : "false");
-    }
-  }
-}
-*/
 
 function init() {
 
