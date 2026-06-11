@@ -17,9 +17,21 @@ if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
 <title>ScriptLog.js</title>
 <script type="text/javascript" src="fetchToZip.js"></script>
 <script type="text/javascript" src="fetchFinalTextsToZip.js"></script>
+<script type="text/javascript" src="fetchStatsToZip.js"></script>
+<script type="text/javascript" src="fetchIDFXToZip.js"></script>
+<script type="text/javascript" src="fetchWritingScoreToZip.js"></script>
+<script type="text/javascript" src="fetchStatsToXlsx.js"></script>
 <script type="text/javascript" src="i18n.js"></script>
 <script type="text/javascript" src="webscriptlog_main.js"></script>
+<script type="text/javascript" src="webscriptlog_linear.js"></script>
+<script type="text/javascript" src="webscriptlog_linear_fast.js"></script>
+<script type="text/javascript" src="webscriptlog_linear_runtime.js"></script>
+<script type="text/javascript" src="webscriptlog_emulation.js"></script>
+<script type="text/javascript" src="webscriptlog_dashboard.js"></script>
+<script type="text/javascript" src="diffkeys-direct-recorder/converter.js"></script>
+<script type="text/javascript" src="dist/webscriptlog_format_converters.js"></script>
 <script type="text/javascript" src="ui.js"></script>
+<!--script type="text/javascript" src="viz.js"></script-->
 <script type="text/javascript" src="helpers_js/idbStore.js"></script>
 <script type="text/javascript" src="ext_js/diff_match_patch.js"></script>
 <script type="text/javascript" src="ext_js/FileSaver.js"></script>
@@ -47,6 +59,7 @@ if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
 						id="recorder"
 						rows="10"
 						cols="80"></textarea>
+				<canvas id="recorderImageOverlay" aria-hidden="true"></canvas>
 			</div>
 
 			<div class="pane-side" id="recorderButtons">
@@ -67,6 +80,36 @@ if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
 						oninput="checkUserCode(this)"
 						autofocus
 						/>
+				<p>
+					<b data-i18n="label.linearRep"></b>
+				</p>
+				<textarea
+						data-i18n-attr="placeholder:ph.linearRep"
+						style="vertical-align: text-top; font-family: monospace; min-height: 90px;"
+						id="linearRepInput"
+						rows="5"
+						cols="36"></textarea>
+				<div id="linearRepActions">
+					<button
+						class="sl_button"
+						type="button"
+						id="b_linearlog"
+						data-i18n="btn.LINEAR_TO_LOG"
+						onclick="saveLinearRepresentationFromUI()"
+						disabled></button>
+				</div>
+				<!--p>
+					<span data-i18n="label.emulateEdits"></span>
+					<input
+						style="width: 60px; font-family: monospace; font-size: 16px;"
+						type="number"
+						id="emulateEditCount"
+						min="0"
+						max="5"
+						step="1"
+						value="5"
+					/>
+				</p-->
 
 				<div data-role="btnbar"></div>
 
@@ -78,80 +121,157 @@ if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
 
   <!-- REPLAY -->
   <template id="panel-REPLAY">
-		<div class="pane-split">
-			<div class="pane-main" id="replayFrame">
-				<textarea style="vertical-align: text-top;" id="playback" rows="10" cols="80"></textarea>
-			</div>
+    <div id="playbackLayoutShell">
+      <div id="playbackDashboard" class="dashboard-workspace"></div>
 
-			<div class="pane-side" id="replayButtons">
-        <span class="sidLabel"></span>
-
-        <div data-role="btnbar"></div>
-
-        <span id="innerH" data-i18n="label.indexeddb"></span>
-        <select style="vertical-align: text-top;" id="lb_load" name="lb" size="10"></select>
-
-        <div style="display:none;" id="div_fetch">
-          <span data-i18n="label.start"></span>
-          <input type="number" id="startlimit" value="0" min="0" max="1000" />
-          <br />
-          <span data-i18n="label.end"></span>
-          <input type="number" id="endlimit" value="5" min="0" max="1000" />
+      <div id="dashboardModuleBank" hidden>
+        <div data-dashboard-module="textReplay">
+          <div class="pane-main" id="replayFrame">
+            <div id="replayTransportControls" class="replay-transport"></div>
+            <div class="replay-options">
+              <label><input type="checkbox" id="replayUseRecorderSize"> Use recorder size</label>
+              <label><input type="checkbox" id="replayEnsureCaretVisible" checked> Keep edit line visible</label>
+              <label><input type="checkbox" id="replayVirtualCursor"> Virtual cursor</label>
+            </div>
+            <textarea style="vertical-align: text-top;" id="playback" rows="10" cols="80" aria-readonly="true" tabindex="0"></textarea>
+            <div id="replaySelectionOverlay" class="replay-selection-overlay" aria-hidden="true"></div>
+            <div id="replayCaretOverlay" class="replay-caret-overlay" aria-hidden="true"></div>
+          </div>
         </div>
 
-				<p></p>
-        <span data-i18n="label.selectFile"></span>
-        <input style="margin: 10px;" type="file" accept="text/plain" onchange="openFile(event)" /><br />
-			</div>
-		</div>
+        <div data-dashboard-module="textTrace">
+          <div id="playbackTextTraceOutput" class="writing-score-trace-host"></div>
+        </div>
 
-    <h3 data-i18n="heading.revisionTable"></h3>
-    <p>
-      <span id="revisionoutput">...</span>
-      <table id="sentenceDiffTable">
-        <thead>
-          <tr>
-            <th data-i18n="th.rowNumber"></th>
-            <th data-i18n="th.localDiff"></th>
-            <th data-i18n="th.classification"></th>
-            <th data-i18n="th.location"></th>
-            <th data-i18n="th.newGroup"></th>
-            <th data-i18n="th.groupDiff"></th>
-            <th data-i18n="th.timeSeconds"></th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </p>
+        <div data-dashboard-module="writingScore">
+          <div class="writing-score-tool">
+            <div class="writing-score-threshold">
+              <label for="playbackWritingScorePauseCrit" data-i18n="label.pauseCriteria"></label>
+              <input type="number" id="playbackWritingScorePauseCrit" value="0.300" min="0" max="30" step="0.1">
+            </div>
+            <div id="playbackWritingScoreOutput" class="writing-score-main-host"></div>
+          </div>
+        </div>
+
+        <div data-dashboard-module="processGraph">
+          <div class="process-graph-tool">
+            <div class="process-graph-controls">
+              <label for="processGraphPauseThreshold">Pause threshold (s):</label>
+              <input type="number" id="processGraphPauseThreshold" value="0.300" min="0" max="300" step="0.1">
+              <label for="processGraphPauseMin">Pause min (s):</label>
+              <input type="number" id="processGraphPauseMin" value="0" min="0" max="300" step="0.1">
+              <label for="processGraphPauseMax">Pause max (s):</label>
+              <input type="number" id="processGraphPauseMax" placeholder="auto" min="0" max="300" step="0.1">
+            </div>
+            <svg id="playbackProgressGraph" width="960" height="500"></svg>
+          </div>
+        </div>
+
+        <div data-dashboard-module="diffKeys">
+          <div id="diffKeysModule" class="diff-keys-host">
+            <div id="diffKeysOutput" class="diff-keys-output">Load a log to build DiffKeys.</div>
+          </div>
+        </div>
+
+        <div data-dashboard-module="playbackControls">
+          <div class="pane-side" id="replayButtons">
+            <span class="sidLabel"></span>
+
+            <div data-role="btnbar"></div>
+
+            <span id="innerH" data-i18n="label.indexeddb"></span>
+            <select style="vertical-align: text-top;" id="lb_load" name="lb" size="10"></select>
+
+            <div style="display:none;" id="div_fetch">
+              <span data-i18n="label.start"></span>
+              <input type="number" id="startlimit" value="0" min="0" max="1000" />
+              <br />
+              <span data-i18n="label.end"></span>
+              <input type="number" id="endlimit" value="5" min="0" max="1000" />
+              <div id="batchZipProgress" class="batch-progress" hidden>
+                <progress id="batchZipProgressBar" max="100" value="0"></progress>
+                <span id="batchZipProgressText"></span>
+              </div>
+            </div>
+
+            <p></p>
+            <span data-i18n="label.selectFile"></span>
+            <input style="margin: 10px;" type="file" accept="text/plain" onchange="openFile(event)" /><br />
+          </div>
+        </div>
+
+        <div data-dashboard-module="revisionTable">
+          <div id="revisionTableModule" class="revision-table-host">
+            <span id="revisionoutput">...</span>
+            <table id="sentenceDiffTable">
+              <thead>
+                <tr>
+                  <th data-i18n="th.rowNumber"></th>
+                  <th data-i18n="th.localDiff"></th>
+                  <th data-i18n="th.classification"></th>
+                  <th data-i18n="th.location"></th>
+                  <th data-i18n="th.newGroup"></th>
+                  <th data-i18n="th.groupDiff"></th>
+                  <th data-i18n="th.timeSeconds"></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div data-dashboard-module="finalTextAnalysis">
+          <div id="ftAnalysis">
+            <div id="label">Time: -</div>
+            <div id="content"></div>
+            <button id="mark-selected">Mark selected</button>
+            <button id="clear-marks">Clear marks</button>
+            <button id="generate-table">Generate Table</button>
+            <div id="table-container"></div>
+          </div>
+        </div>
+
+        <div data-dashboard-module="infoWindow">
+          <div id="infoWindowModule" class="info-window-tool">
+            <textarea style="vertical-align: text-top;" id="messages" rows="10" cols="80"></textarea>
+            <div class="info-window-controls">
+              <button class="sl_button" type="button" id="b_inspect" onclick="inspectRecords()">Inspect</button>
+              <label for="inspectIntervals" data-i18n="label.inspectIntervals"></label>
+              <input type="number" id="inspectIntervals" value="5" min="1" max="20" step="1">
+              <label for="inspectBasis" data-i18n="label.inspectBasis"></label>
+              <select id="inspectBasis">
+                <option value="recording" data-i18n="opt.inspectBasisRecording"></option>
+                <option value="typing" data-i18n="opt.inspectBasisTyping"></option>
+              </select>
+              <label for="pauseCrit" data-i18n="label.pauseCriteria"></label>
+              <input type="number" id="pauseCrit" value="0.300" min="0" max="30" step="0.1">
+            </div>
+          </div>
+        </div>
+
+        <div data-dashboard-module="idfxCsv">
+          <div id="idfxCsvModule" class="idfx-csv-tool">
+            <p class="idfx-csv-note">Note: IDFX import/export is an <em>experimental</em> feature and is still being validated.</p>
+            <textarea style="vertical-align: text-top;" id="idfxCsvOutput" rows="10" cols="80" spellcheck="false"></textarea>
+            <div class="idfx-csv-controls">
+              <button class="sl_button" type="button" id="b_printidfx" onclick="printWebScriptLogIDFX()">Print IDFX</button>
+              <button class="sl_button" type="button" id="b_printpendingdiffkeysdirectidfx" onclick="printPendingDiffKeysDirectIDFX()" hidden>Print pending full DiffKeys IDFX</button>
+              <button class="sl_button" type="button" id="b_importidfx" onclick="importIDFXFromIDFXCSVPane()">Import IDFX</button>
+              <button class="sl_button" type="button" id="b_downloadidfx" onclick="downloadIDFXFromIDFXCSVPane()">Download IDFX</button>
+              <button class="sl_button" type="button" id="b_diagnoseidfx" onclick="diagnoseIDFXReconstructionFromIDFXCSVPane()" hidden>Diagnose IDFX Reconstruction</button>
+              <label class="sl_button idfx-upload-button" for="idfxUploadInput">Upload IDFX</label>
+              <input id="idfxUploadInput" class="idfx-upload-input" type="file" accept=".idfx,.xml,text/xml,application/xml" onchange="uploadIDFXToIDFXCSVPane(event)">
+              <button class="sl_button" type="button" id="b_clearidfxcsv" onclick="clearIDFXCSVOutput()">Clear</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </template>
 
   <!-- ANALYZE -->
   <template id="panel-ANALYZE">
-    <h3 data-i18n="heading.infoWindow"></h3>
-    <p>
-      <textarea style="vertical-align: text-top;" id="messages" rows="10" cols="80"></textarea>
-      <span style="vertical-align: text-top; display:inline-block;">
-        <div data-role="btnbar"></div>
-        Pause criteria
-		    <input type="number" id="pauseCrit" value="0.300" min="0" max="3" step="0.1">
-      </span>
-    </p>
-
-    <!--div id="diffviz"></div-->
-
-    <h3 data-i18n="heading.ftAnalysis"></h3>
-    <p><div id="ftAnalysis">
-      <div id="label">Time: -</div>
-      <div id="content"></div>
-      <button id="generate-table">Generate Table</button>
-      <div id="table-container"></div>
-    </div></p>
-
-    <h3 data-i18n="heading.linData"></h3>
-    <p><span id="linoutput">...</span></p>
-
-    <h3 data-i18n="heading.progressGraph"></h3>
-    <p><svg width="960" height="500"></svg></p>
+    <!-- Analysis panes now live in the dashboard workspace. -->
   </template>
 
   <template id="panel-SETTINGS">
@@ -162,6 +282,15 @@ if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
     <select id="lang">
       <option value="sv">Svenska</option>
       <option value="en">English</option>
+    </select>
+    </p>
+
+    <p>
+    <label for="layoutMode" style="margin-right:8px;" data-i18n="ui.layout"></label>
+    <select id="layoutMode">
+      <option value="modern" data-i18n="ui.layoutModern"></option>
+      <option value="classic" data-i18n="ui.layoutClassic"></option>
+      <option value="grid" data-i18n="ui.layoutGrid"></option>
     </select>
     </p>
 
@@ -183,4 +312,3 @@ if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
 
 
 </html>
-

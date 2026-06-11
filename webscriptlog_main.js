@@ -1,5 +1,61 @@
 /* global messages, keySet, myDmp, current_text, playback, recorder, lb_load, d3, linoutput */
 
+let recorderImageOverlayActive = false;
+let image_record = {};
+let window_record = {};
+
+function drawRecorderImageOverlay() {
+  const canvas = document.getElementById("recorderImageOverlay");
+  if (!canvas || !recorder) return;
+
+  const width = recorder.clientWidth;
+  const height = recorder.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+
+  canvas.width = Math.max(1, Math.floor(width * dpr));
+  canvas.height = Math.max(1, Math.floor(height * dpr));
+
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  ctx.fillStyle = "#2b2f31";
+  ctx.fillRect(0, 0, width, height);
+
+  const titleSize = Math.max(24, Math.min(52, Math.floor(width * 0.07)));
+  const hintSize = Math.max(14, Math.min(24, Math.floor(width * 0.03)));
+
+  ctx.fillStyle = "#64d17a";
+  ctx.textAlign = "center";
+  ctx.font = `700 ${titleSize}px monospace`;
+  ctx.fillText("IMAGE PLACEHOLDER", width / 2, height / 2 - 10);
+
+  ctx.font = `500 ${hintSize}px monospace`;
+  ctx.fillText("Click IMAGE to hide", width / 2, height / 2 + 30);
+}
+
+function toggleRecorderImageOverlay() {
+  const frame = document.getElementById("recorderFrame");
+  if (!frame || !recorder) return;
+  if (!recorder.recording) return;
+
+  recorderImageOverlayActive = !recorderImageOverlayActive;
+  if (recorder.recording) {
+    let myTime = (new Date()).getTime();
+    while (image_record[myTime] !== undefined) myTime += 1;
+    image_record[myTime] = recorderImageOverlayActive ? "show" : "hide";
+  }
+  frame.classList.toggle("image-overlay-active", recorderImageOverlayActive);
+
+  if (recorderImageOverlayActive) {
+    recorder.readOnly = true;
+    recorder.blur();
+    drawRecorderImageOverlay();
+  } else {
+    recorder.readOnly = !recorder.recording;
+    if (recorder.recording) recorder.focus();
+  }
+}
+
 function startRecording() {
   if (recorder.recording) {
     messages.value += 'Already recording!\n';
@@ -18,6 +74,7 @@ function doRecording() {
   header_record = {};
   key_record = {};
   text_record = {};
+  image_record = {};
   text_record_keeper = {};
   cursor_record = {};
   cursor_record_keeper = {};
@@ -31,11 +88,14 @@ function doRecording() {
   recorder.addEventListener('input', recordInput, false);
   recorder.addEventListener('scroll', recordScroll, false);
   recorder.style.borderColor = "white";
-  recorder.readOnly = false;
-  recorder.focus();
+  recorder.readOnly = recorderImageOverlayActive;
+  if (!recorderImageOverlayActive) recorder.focus();
   recorder.recording = true;
   $('#b_record').prop('disabled', true);
   $('#b_recstop').prop('disabled', false);
+  $('#b_image').prop('disabled', false);
+  $('#b_emulate').prop('disabled', true);
+  $('#b_linearlog').prop('disabled', true);
   $('#userCode').prop('disabled', true);
   header_record['starttime'] = (new Date()).getTime();
   messages.value = 'Recording started at ' + header_record['starttime'] + '.\n';
@@ -44,7 +104,222 @@ function doRecording() {
 
 // Requires: idbStore (the KV wrapper), pako, updateListbox()
 
+function makeWebScriptLogStorageKey(prefix, records, fallbackName = '') {
+  const startTime = Number(records?.header_records?.starttime) || Date.now();
+  const d = new Date(startTime);
+  const pad = (value) => String(value).padStart(2, "0");
+  const safeName = String(fallbackName || '')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^A-Za-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32);
+  return `${prefix}${safeName ? `_${safeName}` : ''}_` +
+    `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}_` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+async function makeUniqueWebScriptLogIDBKey(baseKey) {
+  if (!idbStore?.keys) return baseKey;
+  const keys = await idbStore.keys();
+  if (!keys.includes(baseKey)) return baseKey;
+  let index = 2;
+  let key = `${baseKey}_${index}`;
+  while (keys.includes(key)) {
+    index += 1;
+    key = `${baseKey}_${index}`;
+  }
+  return key;
+}
+
+function normalizeWebScriptLogRecords(data) {
+  return {
+    header_records: data?.header_records || {},
+    text_records: data?.text_records || {},
+    cursor_records: data?.cursor_records || {},
+    key_records: data?.key_records || {},
+    scroll_records: data?.scroll_records || {},
+    image_records: data?.image_records || {},
+    window_records: data?.window_records || data?.pdf_records || {}
+  };
+}
+
+function escapeDiffKeysHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function getDiffKeysSortedEntries(recordObject) {
+  if (typeof getSortedRecordEntries === "function") return getSortedRecordEntries(recordObject || {});
+  return Object.keys(recordObject || {})
+    .map((key) => ({ ts: Number(key), value: recordObject[key] }))
+    .filter((entry) => Number.isFinite(entry.ts))
+    .sort((a, b) => a.ts - b.ts);
+}
+
+function formatDiffKeysTime(ts, startTime) {
+  if (!Number.isFinite(ts)) return "";
+  const base = Number.isFinite(startTime) ? startTime : 0;
+  return ((ts - base) / 1000).toFixed(3);
+}
+
+function getDiffKeysChangedText(previousText, currentText, prefixLength, suffixLength) {
+  const deleted = previousText.slice(prefixLength, previousText.length - suffixLength);
+  const inserted = currentText.slice(prefixLength, currentText.length - suffixLength);
+  if (deleted && inserted) return `${deleted} -> ${inserted}`;
+  if (deleted) return `DEL: ${deleted}`;
+  return inserted;
+}
+
+function buildDiffKeysRows(records = {}) {
+  const textEntries = getDiffKeysSortedEntries(records.text_records || {});
+  const keyEntries = getDiffKeysSortedEntries(records.key_records || {});
+  const startTime = Number(records.header_records?.starttime);
+  const keydowns = keyEntries.filter((entry) => String(entry.value || "").startsWith("keydown: "));
+  const keyups = keyEntries.filter((entry) => String(entry.value || "").startsWith("keyup: "));
+  const rows = [];
+  let previousText = "";
+  let keydownIndex = 0;
+  let keyupIndex = 0;
+
+  for (let i = 0; i < textEntries.length; i++) {
+    const entry = textEntries[i];
+    const currentText = String(entry.value ?? "");
+    let prefixLength = 0;
+    const maxPrefix = Math.min(previousText.length, currentText.length);
+    while (prefixLength < maxPrefix && previousText[prefixLength] === currentText[prefixLength]) {
+      prefixLength += 1;
+    }
+
+    let suffixLength = 0;
+    while (
+      suffixLength < previousText.length - prefixLength &&
+      suffixLength < currentText.length - prefixLength &&
+      previousText[previousText.length - 1 - suffixLength] === currentText[currentText.length - 1 - suffixLength]
+    ) {
+      suffixLength += 1;
+    }
+
+    while (keydownIndex < keydowns.length && keydowns[keydownIndex].ts <= entry.ts) keydownIndex += 1;
+    const precedingKeydown = keydownIndex > 0 ? keydowns[keydownIndex - 1] : null;
+
+    while (keyupIndex < keyups.length && keyups[keyupIndex].ts < entry.ts) keyupIndex += 1;
+    const followingKeyup = keyupIndex < keyups.length ? keyups[keyupIndex] : null;
+
+    rows.push({
+      id: i + 1,
+      prefixLength,
+      totalLength: currentText.length,
+      keydownTime: formatDiffKeysTime(precedingKeydown?.ts, startTime),
+      keyupTime: formatDiffKeysTime(followingKeyup?.ts, startTime),
+      keydownValue: precedingKeydown ? String(precedingKeydown.value || "").slice("keydown: ".length) : "",
+      keyupValue: followingKeyup ? String(followingKeyup.value || "").slice("keyup: ".length) : "",
+      changedText: getDiffKeysChangedText(previousText, currentText, prefixLength, suffixLength)
+    });
+
+    previousText = currentText;
+  }
+
+  return rows;
+}
+
+function renderDiffKeysPane(records = null) {
+  const target = document.getElementById("diffKeysOutput");
+  if (!target) return;
+  const source = records || {
+    header_records: header_record || {},
+    text_records: text_record || {},
+    key_records: key_record || {}
+  };
+  const rows = buildDiffKeysRows(source);
+  if (!rows.length) {
+    target.innerHTML = '<div class="diff-keys-empty">No text records available.</div>';
+    return;
+  }
+
+  const body = rows.map((row) => `
+    <tr>
+      <td>${row.id}</td>
+      <td>${row.prefixLength}</td>
+      <td>${row.totalLength}</td>
+      <td>${escapeDiffKeysHtml(row.keydownTime)}</td>
+      <td>${escapeDiffKeysHtml(row.keyupTime)}</td>
+      <td>${escapeDiffKeysHtml(row.keydownValue)}</td>
+      <td>${escapeDiffKeysHtml(row.keyupValue)}</td>
+      <td class="diff-keys-text">${escapeDiffKeysHtml(row.changedText)}</td>
+    </tr>
+  `).join("");
+
+  target.innerHTML = `
+    <table class="diff-keys-table">
+      <thead>
+        <tr>
+          <th>id</th>
+          <th>prefix length</th>
+          <th>text length</th>
+          <th>keydown time</th>
+          <th>keyup time</th>
+          <th>keydown value</th>
+          <th>keyup value</th>
+          <th>text changed</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+    </table>
+  `;
+}
+
+function applyWebScriptLogRecords(records, key = '') {
+  header_record = records.header_records;
+  if (header_record && key) header_record._indexeddb_key = key;
+  text_record = records.text_records;
+  cursor_record = records.cursor_records;
+  key_record = records.key_records;
+  scroll_record = records.scroll_records;
+  image_record = records.image_records;
+  window_record = records.window_records;
+
+  messages.value += `Read ${Object.keys(text_record || {}).length} text records.\n`;
+  messages.scrollTop = messages.scrollHeight;
+
+  makeRevisionTable();
+  renderDiffKeysPane();
+  window.dashboardEvents?.emit?.("log:loaded", {
+    key,
+    text_records: Object.keys(text_record || {}).length
+  });
+}
+
+async function refreshAndSelectIndexedDBKey(key) {
+  await updateListbox();
+  if (!lb_load || !key) return;
+  for (let i = 0; i < lb_load.options.length; i++) {
+    if (lb_load.options[i].text === key || lb_load.options[i].textContent === key) {
+      lb_load.selectedIndex = i;
+      return;
+    }
+  }
+}
+
+async function saveWebScriptLogRecordsToIndexedDB(records, baseKey) {
+  if (!idbStore?.setItem || !pako?.deflate) return null;
+  const key = await makeUniqueWebScriptLogIDBKey(baseKey);
+  const jsonStr = JSON.stringify(records, null, '\t');
+  const compressed = pako.deflate(jsonStr);
+  await idbStore.setItem(key, compressed);
+  try {
+    await refreshAndSelectIndexedDBKey(key);
+  } catch (err) {
+    console.warn('WebScriptLog file was saved, but the IndexedDB listbox could not be refreshed.', err);
+  }
+  return key;
+}
+
 async function stopRecording() {
+  if (typeof requestEmulationStop === 'function') requestEmulationStop();
   if (!recorder.recording) {
     messages.value += 'Not recording!\n'; // localize
     return;
@@ -53,6 +328,8 @@ async function stopRecording() {
   header_record['endtime'] = (new Date()).getTime();
   recorder.recording = false;
   recorder.readOnly = true;
+  recorderImageOverlayActive = false;
+  document.getElementById("recorderFrame")?.classList.remove("image-overlay-active");
   recorder.style.borderColor = "lightskyblue";
   messages.value += 'Recording ended at ' + header_record['endtime'] + '.\n';
 
@@ -66,6 +343,9 @@ async function stopRecording() {
 
   $('#b_record').prop('disabled', false);
   $('#b_recstop').prop('disabled', true);
+  $('#b_image').prop('disabled', true);
+  $('#b_emulate').prop('disabled', !(String(i_code?.value || '').length === 6));
+  $('#b_linearlog').prop('disabled', !(String(i_code?.value || '').length === 6));
   $('#userCode').prop('disabled', false);
 
   if (Object.keys(text_record).length < 1) {
@@ -84,14 +364,18 @@ async function stopRecording() {
     ("0" + d.getMinutes()).slice(-2) + ":" +
     ("0" + d.getSeconds()).slice(-2);
 
-  // Prepare the payload once
-  const jsonStr = JSON.stringify({
+  const records = {
     header_records: header_record,
     text_records:   text_record,
     cursor_records: cursor_record,
     key_records:    key_record,
-    scroll_records: scroll_record
-  }, null, '\t');
+    scroll_records: scroll_record,
+    image_records:  image_record,
+    window_records: window_record
+  };
+
+  // Prepare the payload once
+  const jsonStr = JSON.stringify(records, null, '\t');
 
   // Compress to Uint8Array (deflate – matches your server)
   let compressed;
@@ -268,61 +552,78 @@ async function fetchPlusFromStorage() {
 }
 
 // Assumes: pako is available, idbStore is loaded.
-// Keeps your existing jQuery ajax call.
 
-function fetchFromStorage() {
+async function fetchFromStorage() {
   if (sid == '') {
     console.log('sid is empty, not getting');
     return;
   }
-  var startlimit = $("#startlimit").val();
-  var endlimit = $("#endlimit").val();
-  var mydata = "id=" + sid + "&startlimit=" + startlimit + "&endlimit=" + endlimit;
+  setBatchZipProgress(1, 'Starting');
+  await flushBatchZipProgress();
 
-  var request = $.ajax({
-    url: getdataphp,
-    type: 'POST',
-    data: mydata
-  });
+  const startlimit = $("#startlimit").val();
+  const endlimit = $("#endlimit").val();
+  const mydata = "id=" + sid + "&startlimit=" + startlimit + "&endlimit=" + endlimit;
 
-  request.done(async function (response, textStatus, jqXHR) {
-    if (response.includes("0 results")) {
-      messages.value += response + "\n";
-      return;
+  let response;
+  try {
+    response = await $.ajax({
+      url: getdataphp,
+      type: 'POST',
+      data: mydata
+    });
+  } catch (err) {
+    console.error("The following error occured:", err);
+    messages.value += "Något gick fel :(\n";
+    clearBatchZipProgress('Fetch failed');
+    return;
+  }
+
+  if (typeof response === 'string' && response.includes("0 results")) {
+    messages.value += response + "\n";
+    clearBatchZipProgress('No results');
+    return;
+  }
+
+  const lines = String(response).split('\n').filter(Boolean);
+  if (!lines.length) {
+    messages.value += "0 results\n";
+    clearBatchZipProgress('No results');
+    return;
+  }
+
+  let stored = 0;
+
+  // Process sequentially to keep memory spikes low
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
+    const rarr = line.split('\t');
+    if (rarr.length !== 4) {
+      setBatchZipProgress(((lineIndex + 1) / lines.length) * 100, 'Fetching');
+      if ((lineIndex + 1) % 10 === 0) await flushBatchZipProgress();
+      continue;
     }
 
-    const lines = response.split('\n');
+    // rarr[0] = published_on, rarr[1] = user, rarr[2] = "1,2,3,...", rarr[3] = index
+    const key = `${rarr[3]}_${rarr[1]}_${rarr[0]}`;
 
-    // Process sequentially to keep memory spikes low
-    for (const line of lines) {
-      if (!line) continue;
-      const rarr = line.split('\t');
-      if (rarr.length !== 4) continue;
+    // Store the compressed bytes directly in IndexedDB.
+    const bytes = new Uint8Array(rarr[2].split(',').map(Number));
+    await idbStore.setItem(key, bytes);
+    stored += 1;
 
-      // rarr[0] = published_on, rarr[1] = user, rarr[2] = "1,2,3,...", rarr[3] = index
-      const key = `${rarr[3]}_${rarr[1]}_${rarr[0]}`;
+    setBatchZipProgress(((lineIndex + 1) / lines.length) * 100, 'Fetching');
+    if ((lineIndex + 1) % 10 === 0) await flushBatchZipProgress();
+  }
 
-      // Convert "1,2,3" -> Uint8Array
-      // Make sure to map(Number) to avoid string bytes
-      const bytes = new Uint8Array(rarr[2].split(',').map(Number));
-
-      // Store the **compressed** bytes directly in IndexedDB.
-      // (Much smaller than inflating to string.)
-      await idbStore.setItem(key, bytes);
-    }
-
-    await updateListbox(); // now reads keys from IDB
-  });
-
-  request.fail(function (jqXHR, textStatus, errorThrown) {
-    const status = "Något gick fel :(";
-    console.error("The following error occured: ", textStatus, errorThrown);
-  });
+  await updateListbox();
+  clearBatchZipProgress(`Done: ${stored} files`);
 }
 
 // Make this async wherever you call it: `await loadFromListbox();`
 async function loadFromListbox() {
   replayStop();
+  resetReplayView();
   if (!lb_load || lb_load.selectedIndex < 0) return;
 
   // Your listbox shows the key as its text (same as before)
@@ -348,15 +649,30 @@ async function loadFromListbox() {
 
   // Assign your records (unchanged)
   header_record = data.header_records;
+  if (header_record && key) header_record._indexeddb_key = key;
   text_record   = data.text_records;
   cursor_record = data.cursor_records;
   key_record    = data.key_records;
   scroll_record = data.scroll_records;
+  image_record  = data.image_records || {};
+  window_record = data.window_records || data.pdf_records || {};
 
   messages.value += `Read ${Object.keys(text_record || {}).length} text records.\n`;
   messages.scrollTop = messages.scrollHeight;
 
   makeRevisionTable();
+  window.dashboardEvents?.emit?.("log:loaded", {
+    key,
+    text_records: Object.keys(text_record || {}).length
+  });
+}
+
+async function loadGridFromListbox() {
+  await loadFromListbox();
+  processGraphFormat();
+  showWritingScore();
+  renderDiffKeysPane();
+  makeFTAnalysis();
 }
 
 async function clearListbox() {
@@ -453,6 +769,7 @@ function makeLINfile() {
   linfile = "";
   lastKtime = header_record['starttime'];
   nKeydowns = 0;
+  nMousedowns = 0;
   firstKdown = 0;
   finalKup = 0;
   numberOfPauses = 0;
@@ -473,6 +790,7 @@ function makeLINfile() {
 
     // lin file        
     if (key07 === "mousedo") {
+      nMousedowns += 1;
       linfile += "<span class='linred'>&lt;MOUSE&gt;</span>";
       /*for (kcr in cursor_record) {
         if (kcr > k) {
@@ -577,7 +895,7 @@ function makeLINfile() {
     //messages.value += k + ': ' + text_record[k] + ' - ' + text1 + ':' + text2 + '\n';
     //messages.value += text1 + ':' + text2 + '\n';
   }
-  linoutput.innerHTML = linfile;
+  if (linoutput) linoutput.innerHTML = linfile;
   //messages.value += linfile + '\n';
 }
 
@@ -651,6 +969,56 @@ function applyAllHighlights(ranges) {
     wrapper.appendChild(range.extractContents());
     range.insertNode(wrapper);
   }
+}
+
+function getFinalTextCharSpan(node) {
+  if (!node) return null;
+  const el = (node.nodeType === Node.TEXT_NODE) ? node.parentElement : node;
+  return el?.closest?.('#content span[time-bef][time-aft]') || null;
+}
+
+function unwrapFinalTextMark(wrapper) {
+  if (!wrapper?.parentNode) return;
+  const parent = wrapper.parentNode;
+  while (wrapper.firstChild) {
+    parent.insertBefore(wrapper.firstChild, wrapper);
+  }
+  parent.removeChild(wrapper);
+}
+
+function clearFinalTextMarks() {
+  Array.from(document.querySelectorAll('#content .newspan')).forEach(unwrapFinalTextMark);
+  const tableContainer = document.getElementById("table-container");
+  if (tableContainer) tableContainer.innerHTML = "";
+}
+
+function markFinalTextSelection() {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return false;
+
+  const original = selection.getRangeAt(0);
+  if (original.collapsed) return false;
+
+  const contentDiv = document.getElementById("content");
+  if (!contentDiv || !contentDiv.contains(original.commonAncestorContainer)) return false;
+
+  const startSpan = getFinalTextCharSpan(original.startContainer);
+  const endSpan = getFinalTextCharSpan(original.endContainer);
+  if (!startSpan || !endSpan) return false;
+
+  if (startSpan.closest(".newspan") || endSpan.closest(".newspan")) return false;
+
+  const range = document.createRange();
+  range.setStartBefore(startSpan);
+  range.setEndAfter(endSpan);
+
+  const wrapper = document.createElement("span");
+  wrapper.className = "newspan";
+  wrapper.appendChild(range.extractContents());
+  range.insertNode(wrapper);
+
+  selection.removeAllRanges();
+  return true;
 }
 
 function makeFTAnalysis() {
@@ -829,40 +1197,10 @@ function makeFTAnalysis() {
     labelDiv.textContent = "Time: -";
   });
 
-  function getCharSpan(node) {
-    if (!node) return null;
-    const el = (node.nodeType === Node.TEXT_NODE) ? node.parentElement : node;
-    return el?.closest?.('#content span[time-bef][time-aft]') || null;
-  }
-
   // Wrap selection (snap to whole char spans)
   contentDiv.addEventListener("mouseup", (e) => {
     if (e.target.closest(".newspan")) return;
-
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) return;
-
-    const original = selection.getRangeAt(0);
-    if (original.collapsed) return;
-
-    const startSpan = getCharSpan(original.startContainer);
-    const endSpan = getCharSpan(original.endContainer);
-    if (!startSpan || !endSpan) return;
-
-    // Optional: don't wrap if boundary is already wrapped
-    if (startSpan.closest(".newspan") || endSpan.closest(".newspan")) return;
-
-    const range = document.createRange();
-    range.setStartBefore(startSpan);
-    range.setEndAfter(endSpan);
-
-    const wrapper = document.createElement("span");
-    wrapper.className = "newspan";
-
-    wrapper.appendChild(range.extractContents());
-    range.insertNode(wrapper);
-
-    selection.removeAllRanges();
+    markFinalTextSelection();
   });
 
   // Unwrap on click (works for single-letter selections too)
@@ -870,12 +1208,18 @@ function makeFTAnalysis() {
     const wrapper = e.target.closest(".newspan");
     if (!wrapper) return;
 
-    const parent = wrapper.parentNode;
-    while (wrapper.firstChild) {
-      parent.insertBefore(wrapper.firstChild, wrapper);
-    }
-    parent.removeChild(wrapper);
+    unwrapFinalTextMark(wrapper);
   });
+
+  const markBtn = document.getElementById("mark-selected");
+  if (markBtn) {
+    markBtn.addEventListener("click", markFinalTextSelection);
+  }
+
+  const clearBtn = document.getElementById("clear-marks");
+  if (clearBtn) {
+    clearBtn.addEventListener("click", clearFinalTextMarks);
+  }
 
   // Table generation (robust for 1-letter selections)
   const btn = document.getElementById("generate-table");
@@ -883,12 +1227,14 @@ function makeFTAnalysis() {
     btn.addEventListener("click", generateTable);
   }
 
-	function saveHighlightsToLocalStorage() {
+	async function saveHighlightsToLocalStorage() {
 		const key = lb_load.options[lb_load.selectedIndex].text; // your text id
 		const ranges = saveAllHighlights(); // returns [{start,end}, ...]
 		const storageKey = `highlights:${key}`;
 
 		localStorage.setItem(storageKey, JSON.stringify(ranges));
+    // needs await and handling in listbox
+		//await idbStore.setItem(storageKey, JSON.stringify(ranges)); 
 	}
 
 	function loadHighlightsFromLocalStorage() {
@@ -910,9 +1256,9 @@ function makeFTAnalysis() {
 
 
 
-  function generateTable() {
+  async function generateTable() {
     // save highlights to localStorage
-		saveHighlightsToLocalStorage();
+		await saveHighlightsToLocalStorage();
 
     const container = document.getElementById("content");
     const wrappers = container.getElementsByClassName("newspan");
@@ -961,12 +1307,730 @@ function inspectRecords() {
     + 'Process: ' + processlength + '\n'       // from processGF
     + 'Product: ' + current_text.length + '\n' // from processGF
     + 'Keystrokes: ' + nKeydowns + '\n'
+    + 'Mouse clicks: ' + nMousedowns + '\n'
     + 'Pauses: ' + numberOfPauses + '\n'
     + 'Pausetime : ' + totalPauseTime + '\n'
     + 'Insertions: ' + insertions + '\n'
     + 'Deletions: ' + deletions + '\n'
     + 'Replacements: ' + replacements + '\n';
+
+  messages.value += makeInspectMetricsReport();
+  // messages.value += makeLinearLogPrintout();
+  //messages.value += makeImageClickTextTimeline();
   messages.scrollTop = messages.scrollHeight;
+}
+
+let lastInspectMetrics = null;
+let lastWritingScore = null;
+let lastWritingScoreValidation = null;
+let lastLinearRepresentation = null;
+let lastLinearRepresentationValidation = null;
+
+function makeInspectMetricsReport() {
+  const options = getInspectMetricOptions();
+  const summary = buildInspectMetricsFromRecords(getCurrentRecordSet(), options);
+  lastInspectMetrics = summary;
+  window.lastInspectMetrics = summary;
+
+  return serializeInspectMetrics(summary);
+}
+
+function makeWritingScoreReport() {
+  const score = buildWritingScoreFromRecords(getCurrentRecordSet());
+  const validation = validateWritingScore(score, getCurrentRecordSet());
+
+  lastWritingScore = score;
+  lastWritingScoreValidation = validation;
+  window.lastWritingScore = score;
+  window.lastWritingScoreValidation = validation;
+
+  const lines = ['<writing-score>'];
+  lines.push('time_s\top\texpected_pos\tactual_pos\targ');
+  for (let i = 0; i < score.operations.length; i++) {
+    const op = score.operations[i];
+    lines.push([
+      op.time_s.toFixed(3),
+      op.type === 'insert' ? 'I' : 'D',
+      op.expected_pos,
+      op.actual_pos === null ? '' : op.actual_pos,
+      op.type === 'insert' ? JSON.stringify(op.text) : op.count
+    ].join('\t'));
+  }
+  lines.push('</writing-score>');
+  lines.push('<writing-score-check>');
+  lines.push(`events\t${validation.event_count}`);
+  lines.push(`operations\t${validation.operation_count}`);
+  lines.push(`matches_all\t${validation.matches_all ? 'yes' : 'no'}`);
+  lines.push(`mismatch_count\t${validation.mismatches.length}`);
+  lines.push(`final_text_matches\t${validation.final_text_matches ? 'yes' : 'no'}`);
+  if (validation.mismatches.length) {
+    for (let i = 0; i < validation.mismatches.length; i++) {
+      const mismatch = validation.mismatches[i];
+      lines.push(`mismatch\t${mismatch.time_s.toFixed(3)}\t${JSON.stringify(mismatch.expected)}\t${JSON.stringify(mismatch.actual)}`);
+    }
+  }
+  lines.push('</writing-score-check>');
+
+  return lines.join('\n') + '\n';
+}
+
+function getInspectMetricOptions() {
+  const intervalInput = Number(document.getElementById('inspectIntervals')?.value);
+  const pauseInput = Number(document.getElementById('pauseCrit')?.value);
+  const basisInput = document.getElementById('inspectBasis')?.value;
+
+  return {
+    intervals: Number.isFinite(intervalInput) ? Math.max(1, Math.min(100, Math.floor(intervalInput))) : 5,
+    basis: basisInput === 'typing' ? 'typing' : 'recording',
+    pause_threshold_s: Number.isFinite(pauseInput) ? Math.max(0, pauseInput) : 0.3
+  };
+}
+
+function buildInspectMetrics(options) {
+  return buildInspectMetricsFromRecords(getCurrentRecordSet(), options);
+}
+
+function buildInspectMetricsFromRecords(records, options) {
+  const normalizedRecords = normalizeInspectMetricRecords(records);
+  const startTime = Number(normalizedRecords.header_records?.starttime) || 0;
+  const endTime = Number(normalizedRecords.header_records?.endtime) || startTime;
+  const textEvents = getInspectTextEvents(normalizedRecords.text_records);
+  const keyEvents = getSortedRecordEntries(normalizedRecords.key_records);
+  const textTimes = textEvents.map(ev => ev.ts);
+  const finalText = textEvents.length ? textEvents[textEvents.length - 1].text : '';
+
+  const typingBounds = getTypingBounds(keyEvents);
+  const typingStart = typingBounds.firstKeydown ?? startTime;
+  const typingEnd = typingBounds.lastKeyup ?? endTime;
+  const recordingDuration = Math.max(0, endTime - startTime) / 1000;
+  const typingDuration = Math.max(0, typingEnd - typingStart) / 1000;
+
+  let basisStart = startTime;
+  let basisEnd = endTime;
+  let basisUsed = 'recording';
+
+  if (options.basis === 'typing' && typingBounds.firstKeydown !== null && typingBounds.lastKeyup !== null && typingEnd >= typingStart) {
+    basisStart = typingStart;
+    basisEnd = typingEnd;
+    basisUsed = 'typing';
+  }
+
+  const pauseEvents = getPauseEvents(keyEvents, startTime, options.pause_threshold_s);
+  const boundaries = getIntervalBoundaries(basisStart, basisEnd, options.intervals);
+  const hasWindowRecords = Object.keys(normalizedRecords.window_records || {}).length > 0;
+  const windowBaseline = hasWindowRecords
+    ? getWindowInteractionMetricsAt(basisStart, startTime, normalizedRecords.window_records)
+    : null;
+
+  const cumulativeRows = boundaries.map((boundaryTs, index) => {
+    const cumulative = getCumulativeMetricsAt(boundaryTs, textEvents, textTimes, pauseEvents);
+    const windowCumulative = hasWindowRecords
+      ? subtractWindowMetrics(
+          getWindowInteractionMetricsAt(boundaryTs, startTime, normalizedRecords.window_records),
+          windowBaseline
+        )
+      : null;
+    return {
+      interval: index + 1,
+      boundaryTs,
+      start_s: ((index === 0 ? basisStart : boundaries[index - 1]) - startTime) / 1000,
+      end_s: (boundaryTs - startTime) / 1000,
+      ...cumulative,
+      ...(hasWindowRecords ? { window: windowCumulative } : {})
+    };
+  });
+
+  const intervalRows = cumulativeRows.map((row, index) => {
+    const prev = index === 0 ? null : cumulativeRows[index - 1];
+    const intervalDurationMin = Math.max(0, (row.boundaryTs - (prev ? prev.boundaryTs : basisStart)) / 60000);
+    const processInterval = row.process_chars_total - (prev ? prev.process_chars_total : 0);
+
+    return {
+      interval: row.interval,
+      start_s: row.start_s,
+      end_s: row.end_s,
+      speed_chars_per_min: intervalDurationMin > 0 ? processInterval / intervalDurationMin : 0,
+      word_count_total: row.word_count_total,
+      word_count_interval: row.word_count_total - (prev ? prev.word_count_total : 0),
+      deletions_total: row.deletions_total,
+      deletions_interval: row.deletions_total - (prev ? prev.deletions_total : 0),
+      insertions_total: row.insertions_total,
+      insertions_interval: row.insertions_total - (prev ? prev.insertions_total : 0),
+      replacements_total: row.replacements_total,
+      replacements_interval: row.replacements_total - (prev ? prev.replacements_total : 0),
+      pause_time_total_s: row.pause_time_total_s,
+      pause_time_interval_s: row.pause_time_total_s - (prev ? prev.pause_time_total_s : 0),
+      pause_count_total: row.pause_count_total,
+      pause_count_interval: row.pause_count_total - (prev ? prev.pause_count_total : 0),
+      ...(hasWindowRecords ? {
+        window_total: row.window,
+        window: subtractWindowMetrics(row.window, prev ? prev.window : null)
+      } : {})
+    };
+  });
+
+  const basisDurationMin = Math.max(0, (basisEnd - basisStart) / 60000);
+  const overallCounts = getCumulativeMetricsAt(basisEnd, textEvents, textTimes, pauseEvents);
+  const overallWindow = hasWindowRecords
+    ? subtractWindowMetrics(
+        getWindowInteractionMetricsAt(basisEnd, startTime, normalizedRecords.window_records),
+        windowBaseline
+      )
+    : null;
+
+  return {
+    has_window_records: hasWindowRecords,
+    options: {
+      ...options,
+      basis_used: basisUsed,
+      recording_time_s: recordingDuration,
+      typing_time_s: typingDuration
+    },
+    overall: {
+      speed_chars_per_min: basisDurationMin > 0 ? overallCounts.process_chars_total / basisDurationMin : 0,
+      word_count_total: countProcessWords(finalText),
+      deletions_total: overallCounts.deletions_total,
+      insertions_total: overallCounts.insertions_total,
+      replacements_total: overallCounts.replacements_total,
+      pause_time_total_s: overallCounts.pause_time_total_s,
+      pause_count_total: overallCounts.pause_count_total,
+      ...(hasWindowRecords ? { window: overallWindow } : {})
+    },
+    intervals: intervalRows
+  };
+}
+
+function normalizeInspectMetricRecords(records) {
+  return {
+    header_records: records?.header_records || {},
+    text_records: records?.text_records || {},
+    key_records: records?.key_records || {},
+    window_records: records?.window_records || records?.pdf_records || {}
+  };
+}
+
+function getSortedRecordEntries(recordObj) {
+  return Object.keys(recordObj || {})
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b)
+    .map(ts => ({ ts, value: recordObj[String(ts)] ?? recordObj[ts] }));
+}
+
+function getInspectTextEvents(textRecords = text_record) {
+  const events = [];
+  let previousText = '';
+  const entries = getSortedRecordEntries(textRecords);
+
+  for (let i = 0; i < entries.length; i++) {
+    const ts = entries[i].ts;
+    const currentText = String(entries[i].value ?? '');
+    const diff = myDmp.diff_main(previousText, currentText);
+    myDmp.diff_cleanupSemantic(diff);
+
+    let insertedChars = 0;
+    let hasInsert = false;
+    let hasDelete = false;
+    for (let j = 0; j < diff.length; j++) {
+      if (diff[j][0] === DIFF_INSERT) {
+        insertedChars += diff[j][1].length;
+        hasInsert = true;
+      } else if (diff[j][0] === DIFF_DELETE) {
+        hasDelete = true;
+      }
+    }
+
+    let classification = 'NOCHANGE';
+    if (hasInsert && hasDelete) classification = 'REPLACE';
+    else if (hasInsert) classification = 'INSERT';
+    else if (hasDelete) classification = 'DELETE';
+
+    events.push({
+      ts,
+      text: currentText,
+      processChars: insertedChars,
+      classification
+    });
+    previousText = currentText;
+  }
+
+  return events;
+}
+
+function getTypingBounds(keyEvents) {
+  let firstKeydown = null;
+  let lastKeyup = null;
+
+  for (let i = 0; i < keyEvents.length; i++) {
+    const ev = String(keyEvents[i].value ?? '');
+    if (firstKeydown === null && ev.startsWith('keydown: ')) {
+      firstKeydown = keyEvents[i].ts;
+    }
+    if (ev.startsWith('keyup: ')) {
+      lastKeyup = keyEvents[i].ts;
+    }
+  }
+
+  return { firstKeydown, lastKeyup };
+}
+
+function getPauseEvents(keyEvents, startTime, thresholdS) {
+  const pauses = [];
+  let lastKtime = startTime;
+  let firstKeydownSeen = false;
+
+  for (let i = 0; i < keyEvents.length; i++) {
+    const ev = String(keyEvents[i].value ?? '');
+    const isPauseCarrier = ev.startsWith('keydown: ') || ev.startsWith('mousedown');
+    const passed = (keyEvents[i].ts - lastKtime) / 1000;
+
+    if (isPauseCarrier && firstKeydownSeen && passed >= thresholdS) {
+      pauses.push({ ts: keyEvents[i].ts, duration_s: passed });
+    }
+    if (ev.startsWith('keydown: ')) {
+      firstKeydownSeen = true;
+    }
+    lastKtime = keyEvents[i].ts;
+  }
+
+  return pauses;
+}
+
+function getIntervalBoundaries(startTs, endTs, intervalCount) {
+  const boundaries = [];
+  const duration = Math.max(0, endTs - startTs);
+  for (let i = 1; i <= intervalCount; i++) {
+    boundaries.push(startTs + (duration * i) / intervalCount);
+  }
+  return boundaries;
+}
+
+function getLatestTextAtOrBefore(boundaryTs, textEvents, textTimes) {
+  let chosen = '';
+  for (let i = 0; i < textEvents.length; i++) {
+    if (textTimes[i] <= boundaryTs) chosen = textEvents[i].text;
+    else break;
+  }
+  return chosen;
+}
+
+function countProcessWords(text) {
+  return String(text || '')
+    .split(/\s+/)
+    .filter(token => token.length > 0)
+    .length;
+}
+
+function getCumulativeMetricsAt(boundaryTs, textEvents, textTimes, pauseEvents) {
+  let processChars = 0;
+  let insertionsTotal = 0;
+  let deletionsTotal = 0;
+  let replacementsTotal = 0;
+
+  for (let i = 0; i < textEvents.length; i++) {
+    const ev = textEvents[i];
+    if (ev.ts > boundaryTs) break;
+    processChars += ev.processChars;
+    if (ev.classification === 'INSERT') insertionsTotal += 1;
+    if (ev.classification === 'DELETE') deletionsTotal += 1;
+    if (ev.classification === 'REPLACE') replacementsTotal += 1;
+  }
+
+  let pauseTime = 0;
+  let pauseCount = 0;
+  for (let i = 0; i < pauseEvents.length; i++) {
+    if (pauseEvents[i].ts > boundaryTs) break;
+    pauseTime += pauseEvents[i].duration_s;
+    pauseCount += 1;
+  }
+
+  const currentText = getLatestTextAtOrBefore(boundaryTs, textEvents, textTimes);
+
+  return {
+    process_chars_total: processChars,
+    word_count_total: countProcessWords(currentText),
+    deletions_total: deletionsTotal,
+    insertions_total: insertionsTotal,
+    replacements_total: replacementsTotal,
+    pause_time_total_s: pauseTime,
+    pause_count_total: pauseCount
+  };
+}
+
+function getWindowInteractionMetricsAt(boundaryTs, recordingStartTs, windowRecords = window_record) {
+  const events = getSortedRecordEntries(windowRecords).map(entry => ({
+    ts: entry.ts,
+    rec: entry.value || {}
+  }));
+
+  const dwellMsByWindow = {
+    writing: 0,
+    upper: 0,
+    lower: 0
+  };
+  const switchCounts = {
+    writing_to_task: 0,
+    writing_to_upper: 0,
+    writing_to_lower: 0,
+    task_to_writing: 0,
+    upper_to_writing: 0,
+    lower_to_writing: 0,
+    upper_to_lower: 0,
+    lower_to_upper: 0
+  };
+
+  let lastTs = recordingStartTs;
+  let activeWindow = null;
+  let pendingWindow = null;
+
+  function addWindowMs(windowName, ms) {
+    if (!windowName || ms <= 0) return;
+    if (dwellMsByWindow[windowName] === undefined) dwellMsByWindow[windowName] = 0;
+    dwellMsByWindow[windowName] += ms;
+  }
+
+  function accumulateUntil(ts) {
+    if (ts <= lastTs) return;
+    const dt = ts - lastTs;
+    if (activeWindow) addWindowMs(activeWindow, dt);
+    lastTs = ts;
+  }
+
+  function normalizeWindowName(rec) {
+    const raw = String(rec.window || rec.pane || '').trim().toLowerCase();
+    if (raw === 'upper' || raw === 'lower' || raw === 'writing' || raw === 'task') return raw;
+    return null;
+  }
+
+  function registerSwitch(fromWindow, toWindow) {
+    if (!fromWindow || !toWindow || fromWindow === toWindow) return;
+    const key = `${fromWindow}_to_${toWindow}`;
+    if (switchCounts[key] !== undefined) switchCounts[key] += 1;
+    if (fromWindow === 'writing' && (toWindow === 'upper' || toWindow === 'lower')) {
+      switchCounts.writing_to_task += 1;
+    }
+    if ((fromWindow === 'upper' || fromWindow === 'lower') && toWindow === 'writing') {
+      switchCounts.task_to_writing += 1;
+    }
+  }
+
+  for (let i = 0; i < events.length; i++) {
+    const { ts, rec } = events[i];
+    if (ts > boundaryTs) break;
+    accumulateUntil(ts);
+
+    const ev = rec.event;
+    const windowName = normalizeWindowName(rec);
+
+    if (ev === 'show' || ev === 'hide') {
+      activeWindow = null;
+      pendingWindow = null;
+      continue;
+    }
+    if (ev === 'mouse_enter') {
+      const fromWindow = activeWindow || pendingWindow;
+      registerSwitch(fromWindow, windowName);
+      activeWindow = windowName;
+      pendingWindow = null;
+      continue;
+    }
+    if (ev === 'mouse_leave') {
+      if (windowName && activeWindow === windowName) {
+        pendingWindow = activeWindow;
+        activeWindow = null;
+      }
+    }
+  }
+
+  accumulateUntil(Math.max(boundaryTs, lastTs));
+
+  const totalTaskMs = (dwellMsByWindow.upper || 0) + (dwellMsByWindow.lower || 0);
+
+  return {
+    has_records: events.length > 0 ? 1 : 0,
+    dwell_writing_s: dwellMsByWindow.writing / 1000,
+    dwell_task_s: totalTaskMs / 1000,
+    dwell_upper_s: dwellMsByWindow.upper / 1000,
+    dwell_lower_s: dwellMsByWindow.lower / 1000,
+    writing_to_task: switchCounts.writing_to_task,
+    writing_to_upper: switchCounts.writing_to_upper,
+    writing_to_lower: switchCounts.writing_to_lower,
+    task_to_writing: switchCounts.task_to_writing,
+    upper_to_writing: switchCounts.upper_to_writing,
+    lower_to_writing: switchCounts.lower_to_writing,
+    upper_to_lower: switchCounts.upper_to_lower,
+    lower_to_upper: switchCounts.lower_to_upper
+  };
+}
+
+function subtractWindowMetrics(currentMetrics, baseMetrics) {
+  const base = baseMetrics || {
+    has_records: 0,
+    dwell_writing_s: 0,
+    dwell_task_s: 0,
+    dwell_upper_s: 0,
+    dwell_lower_s: 0,
+    writing_to_task: 0,
+    writing_to_upper: 0,
+    writing_to_lower: 0,
+    task_to_writing: 0,
+    upper_to_writing: 0,
+    lower_to_writing: 0,
+    upper_to_lower: 0,
+    lower_to_upper: 0
+  };
+
+  return {
+    has_records: currentMetrics.has_records,
+    dwell_writing_s: currentMetrics.dwell_writing_s - base.dwell_writing_s,
+    dwell_task_s: currentMetrics.dwell_task_s - base.dwell_task_s,
+    dwell_upper_s: currentMetrics.dwell_upper_s - base.dwell_upper_s,
+    dwell_lower_s: currentMetrics.dwell_lower_s - base.dwell_lower_s,
+    writing_to_task: currentMetrics.writing_to_task - base.writing_to_task,
+    writing_to_upper: currentMetrics.writing_to_upper - base.writing_to_upper,
+    writing_to_lower: currentMetrics.writing_to_lower - base.writing_to_lower,
+    task_to_writing: currentMetrics.task_to_writing - base.task_to_writing,
+    upper_to_writing: currentMetrics.upper_to_writing - base.upper_to_writing,
+    lower_to_writing: currentMetrics.lower_to_writing - base.lower_to_writing,
+    upper_to_lower: currentMetrics.upper_to_lower - base.upper_to_lower,
+    lower_to_upper: currentMetrics.lower_to_upper - base.lower_to_upper
+  };
+}
+
+function makeLinearLogPrintout() {
+  const start = Number(header_record?.starttime) || 0;
+  const dmp = new diff_match_patch();
+  const lines = ['<linear-log-compact>'];
+
+  function fmtTs(ts) {
+    return ((ts - start) / 1000).toFixed(3) + 's';
+  }
+
+  function parseCursor(raw) {
+    const s = String(raw || '').split(':');
+    if (s.length !== 2) return null;
+    const a = Number(s[0]);
+    const b = Number(s[1]);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    return { start: a, end: b };
+  }
+
+  function getCursorAtOrBefore(ts) {
+    const times = Object.keys(cursor_record || {})
+      .map(Number)
+      .filter(v => Number.isFinite(v) && v <= ts)
+      .sort((a, b) => a - b);
+    if (!times.length) return null;
+    return parseCursor(cursor_record[String(times[times.length - 1])] ?? cursor_record[times[times.length - 1]]);
+  }
+
+  function summarizeTextDiff(prevText, currText) {
+    const diffs = dmp.diff_main(prevText || '', currText || '');
+    dmp.diff_cleanupSemantic(diffs);
+
+    let pos = 0;
+    let insLen = 0;
+    let delLen = 0;
+    const parts = [];
+
+    for (let i = 0; i < diffs.length; i++) {
+      const op = diffs[i][0];
+      const chunk = diffs[i][1] || '';
+      if (op === DIFF_EQUAL) {
+        pos += chunk.length;
+        continue;
+      }
+
+      const safe = chunk.replace(/\n/g, '\\n');
+      if (op === DIFF_DELETE) {
+        delLen += chunk.length;
+        parts.push(`=${pos} -"${safe}"`);
+      } else if (op === DIFF_INSERT) {
+        insLen += chunk.length;
+        parts.push(`=${pos} +"${safe}"`);
+        pos += chunk.length;
+      }
+    }
+
+    let cls = 'NOCHANGE';
+    if (insLen > 0 && delLen > 0) cls = 'REPLACE';
+    else if (insLen > 0) cls = 'INSERT';
+    else if (delLen > 0) cls = 'DELETE';
+
+    // expected cursor after previous text change
+    let unchangedBefore = 0;
+    for (let i = 0; i < diffs.length; i++) {
+      if (diffs[i][0] === DIFF_EQUAL) unchangedBefore += (diffs[i][1] || '').length;
+      else break;
+    }
+    const expectedAfter = (cls === 'DELETE') ? unchangedBefore : (unchangedBefore + insLen);
+
+    return {
+      cls,
+      expectedAfter,
+      summary: parts.length ? parts.join(' | ') : '[no change]'
+    };
+  }
+
+  const events = [];
+
+  const keyTimes = Object.keys(key_record || {})
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+
+  for (let i = 0; i < keyTimes.length; i++) {
+    const ts = keyTimes[i];
+    const raw = key_record[String(ts)] ?? key_record[ts] ?? '';
+    if (typeof raw !== 'string') continue;
+
+    if (raw.startsWith('keydown: ')) {
+      const keyName = raw.substring(9);
+      events.push({ ts, type: 'keydown', key: keyName });
+    } else if (raw.startsWith('mousedown')) {
+      events.push({ ts, type: 'mouse', key: 'mousedown' });
+    } else if (raw.startsWith('mouseup')) {
+      events.push({ ts, type: 'mouse', key: 'mouseup' });
+    }
+  }
+
+  const textTimes = Object.keys(text_record || {})
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+
+  let prevText = '';
+  for (let i = 0; i < textTimes.length; i++) {
+    const ts = textTimes[i];
+    const currText = text_record[String(ts)] ?? text_record[ts] ?? '';
+    const diffInfo = summarizeTextDiff(prevText, currText);
+    events.push({
+      ts,
+      type: 'text',
+      diffInfo
+    });
+    prevText = currText;
+  }
+
+  events.sort((a, b) => a.ts - b.ts || (a.type === 'text' ? 1 : -1));
+
+  let lastTs = start;
+  let expectedCursor = 0;
+  const pauseCritValue = Number(document.getElementById('pauseCrit')?.value);
+  const longPauseSec = Number.isFinite(pauseCritValue) ? Math.max(1.0, pauseCritValue) : 1.0;
+  const navKeys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
+
+  for (let i = 0; i < events.length; i++) {
+    const ev = events[i];
+    const delta = (ev.ts - lastTs) / 1000;
+    if (delta >= longPauseSec) {
+      lines.push(`${fmtTs(ev.ts)} pause ${delta.toFixed(3)}s`);
+    }
+    lastTs = ev.ts;
+
+    if (ev.type === 'text') {
+      lines.push(`${fmtTs(ev.ts)} ${ev.diffInfo.cls} ${ev.diffInfo.summary}`);
+      expectedCursor = ev.diffInfo.expectedAfter;
+      continue;
+    }
+
+    let line = `${fmtTs(ev.ts)} keydown ${ev.key}`;
+    const isCursorSensitive = ev.type === 'mouse' || navKeys.has(ev.key);
+    if (isCursorSensitive) {
+      const cur = getCursorAtOrBefore(ev.ts);
+      if (cur) {
+        const isExpected = cur.start === expectedCursor && cur.end === expectedCursor;
+        if (!isExpected) {
+          line += ` cursor ${cur.start}:${cur.end}`;
+        }
+        if (cur.start === cur.end) expectedCursor = cur.start;
+      }
+    }
+    lines.push(line);
+  }
+  lines.push('</linear-log-compact>');
+
+  return lines.join('\n') + '\n';
+}
+
+function makeImageClickTextTimeline() {
+  const showTimes = Object.keys(image_record || {})
+    .map(Number)
+    .filter(Number.isFinite)
+    .filter(ts => (image_record[String(ts)] ?? image_record[ts]) === "show")
+    .sort((a, b) => a - b);
+
+  if (!showTimes.length) {
+    return 'No image show records.\n';
+  }
+
+  const textTimes = Object.keys(text_record || {})
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+
+  function textAtOrBefore(ts) {
+    let chosen = '';
+    for (let i = 0; i < textTimes.length; i++) {
+      const t = textTimes[i];
+      if (t <= ts) {
+        chosen = text_record[String(t)] ?? text_record[t] ?? chosen;
+      } else {
+        break;
+      }
+    }
+    return chosen;
+  }
+
+  const lines = [];
+  const dmp = new diff_match_patch();
+
+  function formatTimeSinceStart(ts) {
+    const start = Number(header_record?.starttime) || 0;
+    return ((ts - start) / 1000).toFixed(3);
+  }
+
+  function formatDiffSinceLastShow(prevText, nextText) {
+    const diffs = dmp.diff_main(prevText || '', nextText || '');
+    dmp.diff_cleanupSemantic(diffs);
+
+    const parts = [];
+    for (let i = 0; i < diffs.length; i++) {
+      const op = diffs[i][0];
+      const text = (diffs[i][1] || '').replace(/\n/g, '\\n');
+      if (!text) continue;
+      if (op === -1) parts.push('- ' + text);
+      if (op === 1) parts.push('+ ' + text);
+    }
+    return parts.length ? parts.join('\n') : '[no change]';
+  }
+
+  const snapshots = showTimes.map(ts => textAtOrBefore(ts));
+  const lastTextTime = textTimes.length ? textTimes[textTimes.length - 1] : null;
+  const finalText = lastTextTime === null
+    ? ''
+    : (text_record[String(lastTextTime)] ?? text_record[lastTextTime] ?? '');
+
+  lines.push('<start>');
+  lines.push(snapshots[0] || '[empty]');
+
+  for (let i = 0; i < showTimes.length; i++) {
+    lines.push(`<Image clicked @ ${formatTimeSinceStart(showTimes[i])}s>`);
+    if (i < showTimes.length - 1) {
+      lines.push(formatDiffSinceLastShow(snapshots[i], snapshots[i + 1]));
+    }
+  }
+
+  const lastShowSnapshot = snapshots[snapshots.length - 1] || '';
+  const stopTs = Number(header_record?.endtime);
+  const stopTag = Number.isFinite(stopTs)
+    ? `<Final diff before stop @ ${formatTimeSinceStart(stopTs)}s>`
+    : '<Final diff before stop>';
+  lines.push(stopTag);
+  lines.push(formatDiffSinceLastShow(lastShowSnapshot, finalText));
+
+  lines.push('<stop>');
+  return lines.join('\n') + '\n';
 }
 
 let sentenceDiffTable = '';
@@ -987,7 +2051,10 @@ function makeRevisionTable() {
   sentenceDiffTable = document.getElementById('sentenceDiffTable').getElementsByTagName('tbody')[0];
   sentenceDiffTable.innerHTML='';
   text_record["0"] = '';
-  recordKeys = Object.keys(text_record);
+  recordKeys = Object.keys(text_record).sort((a, b) => Number(a) - Number(b));
+  groupStartText = '';
+  groupStartTime = Number(recordKeys[1]) || 0;
+  previousRow = '';
 
   for (let i = 1; i < recordKeys.length; i++) {
     const previousText = text_record[recordKeys[i - 1]];
@@ -1006,7 +2073,7 @@ function makeRevisionTable() {
     if (isNewGroup) {
       //groupPrevTime = recordKeys[i-1];
       groupStartTime = recordKeys[i];
-      previousRow.className = 'last-in-group';
+      if (previousRow) previousRow.className = 'last-in-group';
     }
 
     const row = sentenceDiffTable.insertRow();
@@ -1033,7 +2100,7 @@ function makeRevisionTable() {
 
     previousRow = row;
   }
-  previousRow.className = 'last-in-group';
+  if (previousRow) previousRow.className = 'last-in-group';
 
   const rows = sentenceDiffTable.getElementsByTagName('tr');
 
@@ -1055,48 +2122,131 @@ function makeRevisionTable() {
 
 let groupTime = -1;
 
+function parseReplayCursorRecord(raw) {
+  const parts = String(raw ?? '').split(':');
+  if (parts.length !== 2) return null;
+  const start = Number(parts[0]);
+  const end = Number(parts[1]);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return { start, end };
+}
+
+function clampReplayCursor(cursor, text) {
+  if (!cursor) return null;
+  const max = String(text ?? '').length;
+  const start = Math.max(0, Math.min(max, cursor.start));
+  const end = Math.max(0, Math.min(max, cursor.end));
+  return { start, end };
+}
+
+function isReplayCursorInText(cursor, text) {
+  if (!cursor) return false;
+  const max = String(text ?? '').length;
+  return cursor.start >= 0 && cursor.start <= max && cursor.end >= 0 && cursor.end <= max;
+}
+
+function findReplayBoundaryEntry(recordObj, timestamp, inclusive) {
+  const boundary = Number(timestamp);
+  if (!Number.isFinite(boundary)) return null;
+  const entries = getSortedRecordEntries(recordObj || {});
+  let selected = null;
+  for (let i = 0; i < entries.length; i++) {
+    const ts = entries[i].ts;
+    if ((inclusive ? ts <= boundary : ts < boundary)) selected = entries[i];
+    else break;
+  }
+  return selected;
+}
+
+function inferReplayCursorFromTextChange(textEntry) {
+  if (!textEntry) return { start: 0, end: 0 };
+  const previousTextEntry = findReplayBoundaryEntry(text_record || {}, textEntry.ts, false);
+  const previousText = String(previousTextEntry?.value ?? '');
+  const currentText = String(textEntry.value ?? '');
+  const diff = myDmp.diff_main(previousText, currentText);
+
+  let oldPos = 0;
+  let newPos = 0;
+  let firstChange = null;
+  let insertedLength = 0;
+  let deletedLength = 0;
+
+  for (let i = 0; i < diff.length; i++) {
+    const op = diff[i][0];
+    const text = diff[i][1] || '';
+    if (op === DIFF_EQUAL) {
+      oldPos += text.length;
+      newPos += text.length;
+    } else {
+      if (firstChange === null) firstChange = newPos;
+      if (op === DIFF_INSERT) {
+        insertedLength += text.length;
+        newPos += text.length;
+      } else if (op === DIFF_DELETE) {
+        deletedLength += text.length;
+        oldPos += text.length;
+      }
+    }
+  }
+
+  const position = firstChange === null
+    ? currentText.length
+    : firstChange + (insertedLength > 0 ? insertedLength : 0);
+  return clampReplayCursor({ start: position, end: position }, currentText);
+}
+
+function resolveReplayStateAtTimestamp(timestamp, mode = 'before') {
+  const inclusive = mode === 'inclusive';
+  const textEntry = findReplayBoundaryEntry(text_record || {}, timestamp, inclusive);
+  const text = String(textEntry?.value ?? '');
+  const cursorEntry = findReplayBoundaryEntry(cursor_record || {}, timestamp, inclusive);
+  const scrollEntry = findReplayBoundaryEntry(scroll_record || {}, timestamp, inclusive);
+
+  const parsedCursor = parseReplayCursorRecord(cursorEntry?.value);
+  let cursor = isReplayCursorInText(parsedCursor, text) ? parsedCursor : null;
+  if (!cursor || (cursorEntry && (cursorEntry.ts < Number(textEntry?.ts || -Infinity) || cursorEntry.ts > Number(timestamp)))) {
+    const exactTextCursor = textEntry
+      ? parseReplayCursorRecord((cursor_record || {})[String(textEntry.ts)] ?? (cursor_record || {})[textEntry.ts])
+      : null;
+    cursor = clampReplayCursor(exactTextCursor, text) || inferReplayCursorFromTextChange(textEntry);
+  }
+
+  return {
+    text,
+    textTs: textEntry?.ts ?? null,
+    cursor,
+    cursorTs: cursorEntry?.ts ?? null,
+    scrollTop: scrollEntry ? Number(scrollEntry.value) : null,
+    scrollTs: scrollEntry?.ts ?? null
+  };
+}
+
+function setReplayStartTimestamp(timestamp, mode = 'before') {
+  replayStop();
+
+  const nextGroupTime = Number(timestamp);
+  if (!Number.isFinite(nextGroupTime)) return;
+  groupTime = nextGroupTime;
+
+  const replayStateAtTime = resolveReplayStateAtTimestamp(groupTime, mode);
+  playback.value = replayStateAtTime.text;
+  const cursor = replayStateAtTime.cursor || { start: 0, end: 0 };
+  playback.setSelectionRange(cursor.start, cursor.end);
+  if (Number.isFinite(replayStateAtTime.scrollTop)) playback.scrollTop = replayStateAtTime.scrollTop;
+  else ensureReplayCaretVisible(cursor.end);
+
+  syncReplayCursorMode(cursor.end);
+  updateProcessGraphReplayMarker(groupTime);
+  window.dashboardEvents?.emit?.("replay:jump", {
+    timestamp: groupTime,
+    mode
+  });
+}
+
 function playFromRow(e) {
-  groupTime = Number(e.srcElement.parentElement.cells[6].id);
-
-  let textTime = -1;
-
-  for (var t in text_record) {
-    if (t < groupTime) {
-      textTime = t;
-    }
-  }
-
-  if (textTime > -1) {
-    playback.value = text_record[textTime];
-  } else {
-    playback.value = ''; // this needs to modified for when we have initial text
-  }
-
-  let cursorTime = -1;
-
-  for (var t in cursor_record) {
-    if (t < groupTime) {
-      cursorTime = t;
-    }
-  }
-  if (cursorTime > -1) {
-    val_indices = cursor_record[cursorTime].split(":");
-    playback.setSelectionRange(val_indices[0], val_indices[1]);
-  }
-
-  let scrollTime = -1;
-
-  for (var t in scroll_record) {
-    if (t < groupTime) {
-      scrollTime = t;
-    }
-  }
-  if (scrollTime > -1) {
-    playback.scrollTop = scroll_record[scrollTime];
-  }
-  playback.focus();
-
-  //console.log(groupTime);
+  const row = e.currentTarget || e.target?.closest?.('tr');
+  const tsCell = row?.cells?.[6];
+  setReplayStartTimestamp(tsCell ? Number(tsCell.id) : NaN);
 }
 
 function diff_prettyHtml_short(diffs, context) {
@@ -1215,40 +2365,78 @@ function computeSecondDiff(currentText, groupStartText, location) {
 }
 
 function processGraphFormat() {
-  data = [];
+  const startTime = Number(header_record?.starttime) || 0;
+  const pauseSettings = getProcessGraphPauseSettings();
+  const pauseThreshold = pauseSettings.threshold;
+  const textSeries = [];
+  const positionSeries = [];
+  const keyEvents = getSortedRecordEntries(key_record || {});
+  const cursorEntries = getSortedRecordEntries(cursor_record || {});
+
   current_text = "";
   processlength = 0;
-  var formatTime = d3.timeFormat("%M:%S.%L");
-  for (var k in text_record) {
 
+  for (var k in text_record) {
     edited_text = text_record[k];
     var commonlength = myDmp.diff_commonPrefix(current_text, edited_text);
     text1 = current_text.substring(commonlength);
     text2 = edited_text.substring(commonlength);
 
-    // Trim off common suffix (speedup).
     commonlengths = myDmp.diff_commonSuffix(text1, text2);
-    //var commonsuffix = text1.substring(text1.length - commonlengths);
     text1 = text1.substring(0, text1.length - commonlengths);
     text2 = text2.substring(0, text2.length - commonlengths);
 
     processlength += text2.length;
-    //passed_time = (k - header_record['starttime']) / 1000.0;
-    passed_time = formatTime(k - header_record['starttime']);
+    const elapsedMs = Number(k) - startTime;
 
-    data.push({date: passed_time,
-        product: text_record[k].length,
-        process: processlength});
-
-    // only in verbose
-    //messages.value += "time: " + passed_time
-    //        + ', product: ' + text_record[k].length
-    //        + ', process: ' + processlength + '\n';
+    textSeries.push({
+      elapsed_ms: elapsedMs,
+      product: text_record[k].length,
+      process: processlength
+    });
 
     current_text = edited_text;
   }
-  drawSvg(data);
 
+  for (let i = 0; i < cursorEntries.length; i++) {
+    const parsed = parseCursorRecord(cursorEntries[i].value);
+    if (!parsed) continue;
+    positionSeries.push({
+      elapsed_ms: cursorEntries[i].ts - startTime,
+      position: parsed.end
+    });
+  }
+
+  const pauseSeries = getPauseEvents(keyEvents, startTime, pauseThreshold)
+    .map((pause) => ({
+      elapsed_ms: pause.ts - startTime,
+      duration_s: pause.duration_s
+    }))
+    .filter((pause) => pause.duration_s >= pauseSettings.min && (
+      pauseSettings.max === null || pause.duration_s <= pauseSettings.max
+    ));
+
+  drawSvg({
+    textSeries,
+    positionSeries,
+    pauseSeries,
+    pauseAxisMin: pauseSettings.min,
+    pauseAxisMax: pauseSettings.max
+  });
+}
+
+function getProcessGraphPauseSettings() {
+  const thresholdInput = Number(document.getElementById('processGraphPauseThreshold')?.value);
+  const minInput = Number(document.getElementById('processGraphPauseMin')?.value);
+  const maxInputRaw = document.getElementById('processGraphPauseMax')?.value;
+  const maxInput = Number(maxInputRaw);
+  const threshold = Number.isFinite(thresholdInput) ? Math.max(0, thresholdInput) : 0.3;
+  const min = Number.isFinite(minInput) ? Math.max(0, minInput) : 0;
+  const max = maxInputRaw === '' || maxInputRaw == null || !Number.isFinite(maxInput)
+    ? null
+    : Math.max(min, maxInput);
+
+  return { threshold, min, max };
 }
 
 function recordKeyDown(e) {
@@ -1376,12 +2564,138 @@ function replayFast() {
   replayStart(0.1);
 }
 
+let replayState = {
+  active: false,
+  paused: false,
+  speedup: 1,
+  mark: 0,
+  startedAt: 0,
+  currentTs: null
+};
+
+function bindPlaybackEditGuard() {
+  if (!playback || playback.dataset.editGuardBound === 'true') return;
+  playback.setAttribute('aria-readonly', 'true');
+  playback.setAttribute('tabindex', '0');
+  playback.readOnly = false;
+
+  playback.addEventListener('beforeinput', (event) => {
+    event.preventDefault();
+  });
+  playback.addEventListener('paste', (event) => {
+    event.preventDefault();
+  });
+  playback.addEventListener('drop', (event) => {
+    event.preventDefault();
+  });
+  playback.addEventListener('cut', (event) => {
+    event.preventDefault();
+  });
+  playback.addEventListener('scroll', () => {
+    syncReplayCursorMode();
+  });
+  playback.addEventListener('keydown', (event) => {
+    const editKeys = new Set(['Backspace', 'Delete', 'Enter']);
+    const isCharacterInput = event.key?.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
+    if (isCharacterInput || editKeys.has(event.key)) {
+      event.preventDefault();
+    }
+  });
+
+  playback.dataset.editGuardBound = 'true';
+}
+
+function syncReplayRecorderSize() {
+  const checkbox = document.getElementById('replayUseRecorderSize');
+  if (!playback || !recorder || !checkbox?.checked) {
+    playback?.classList?.remove('replay-recorder-size');
+    if (playback) {
+      playback.style.removeProperty('--replay-recorder-width');
+      playback.style.removeProperty('--replay-recorder-height');
+      playback.style.fontFamily = "Calibri, Georgia, serif";
+      playback.style.fontSize = '';
+      playback.style.lineHeight = '';
+    }
+    syncReplayCursorMode();
+    return;
+  }
+
+  const measurement = measureRecorderForReplay();
+  if (measurement.width > 0 && measurement.height > 0) {
+    playback.classList.add('replay-recorder-size');
+    playback.style.setProperty('--replay-recorder-width', `${Math.round(measurement.width)}px`);
+    playback.style.setProperty('--replay-recorder-height', `${Math.round(measurement.height)}px`);
+    playback.style.fontFamily = measurement.fontFamily;
+    playback.style.fontSize = measurement.fontSize;
+    playback.style.lineHeight = measurement.lineHeight;
+  }
+  syncReplayCursorMode();
+}
+
+function measureRecorderForReplay() {
+  const getMeasurement = () => {
+    const rect = recorder.getBoundingClientRect();
+    const style = window.getComputedStyle(recorder);
+    return {
+      width: rect.width,
+      height: rect.height,
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      lineHeight: style.lineHeight
+    };
+  };
+
+  let measurement = getMeasurement();
+  if (measurement.width > 0 && measurement.height > 0) return measurement;
+
+  const panel = recorder.closest('.panel');
+  if (!panel) return measurement;
+
+  const previousStyle = {
+    display: panel.style.display,
+    position: panel.style.position,
+    visibility: panel.style.visibility,
+    left: panel.style.left,
+    top: panel.style.top,
+    width: panel.style.width,
+    pointerEvents: panel.style.pointerEvents,
+    zIndex: panel.style.zIndex
+  };
+
+  panel.style.display = 'block';
+  panel.style.position = 'absolute';
+  panel.style.visibility = 'hidden';
+  panel.style.left = '-100000px';
+  panel.style.top = '0';
+  panel.style.width = `${Math.max(320, document.documentElement.clientWidth - 24)}px`;
+  panel.style.pointerEvents = 'none';
+  panel.style.zIndex = '-1';
+
+  measurement = getMeasurement();
+
+  panel.style.display = previousStyle.display;
+  panel.style.position = previousStyle.position;
+  panel.style.visibility = previousStyle.visibility;
+  panel.style.left = previousStyle.left;
+  panel.style.top = previousStyle.top;
+  panel.style.width = previousStyle.width;
+  panel.style.pointerEvents = previousStyle.pointerEvents;
+  panel.style.zIndex = previousStyle.zIndex;
+
+  return measurement;
+}
+
+function updateReplayPauseButton() {
+  const button = document.getElementById('b_reppause');
+  if (!button) return;
+  button.textContent = replayState.paused ? t('btn.RESUME') : t('btn.PAUSE');
+}
+
 function replayStart(speedup) {
   replayStop();
   if (recorder.recording) {
     stopRecording();
   }
-  playback.focus();
   //store the time the sequence started
   //so that we can subtract it from subsequent actions
   // set up text changes
@@ -1391,6 +2705,18 @@ function replayStart(speedup) {
   } else {
     var mark = groupTime;
   }
+  replayState = {
+    active: true,
+    paused: false,
+    speedup,
+    mark,
+    startedAt: Date.now(),
+    currentTs: mark
+  };
+  updateReplayPauseButton();
+  syncReplayCursorMode();
+  updateProcessGraphReplayMarker(mark);
+  startProcessGraphReplayMarkerLoop();
   //var mark = 1682689804661;
   //var mark = 1682689195634;
   for (var t in text_record) {
@@ -1403,7 +2729,7 @@ function replayStart(speedup) {
     //        }
     // We need to create a callback which closes over the value of t
     // because t would have changed by the time this is run
-    text_record_keeper[t] = setTimeout(changeValueCallback(text_record[t]), timeout);
+    if (timeout >= 0) text_record_keeper[t] = setTimeout(changeValueCallback(text_record[t], t), timeout);
   }
 
   // set up cursor changes
@@ -1418,7 +2744,7 @@ function replayStart(speedup) {
     //        }
     // We need to create a callback which closes over the value of t
     // because t would have changed by the time this is run
-    cursor_record_keeper[t] = setTimeout(changeCursorCallback(cursor_record[t]), timeout);
+    if (timeout >= 0) cursor_record_keeper[t] = setTimeout(changeCursorCallback(cursor_record[t], t), timeout);
   }
 
   // set up scroll changes
@@ -1426,12 +2752,12 @@ function replayStart(speedup) {
     // if (mark) see above...impossible to have scroll_record without starttime
     var timeout = t - mark;
     timeout = timeout * speedup;
-    scroll_record_keeper[t] = setTimeout(changeScrollCallback(scroll_record[t]), timeout);
+    if (timeout >= 0) scroll_record_keeper[t] = setTimeout(changeScrollCallback(scroll_record[t], t), timeout);
   }
 
 }
 
-function replayStop() {
+function clearReplayTimers() {
   for (var t in text_record) {
     clearTimeout(text_record_keeper[t]);
   }
@@ -1441,74 +2767,449 @@ function replayStop() {
   for (var t in scroll_record) {
     clearTimeout(scroll_record_keeper[t]);
   }
+  text_record_keeper = {};
+  cursor_record_keeper = {};
+  scroll_record_keeper = {};
 }
 
-function changeValueCallback(val) {
-  return function () {
-    playback.value = val;
-  };
+function replayStop() {
+  const stoppedTs = getCurrentReplayLogicalTimestamp();
+  clearReplayTimers();
+  stopProcessGraphReplayMarkerLoop();
+  replayState.active = false;
+  replayState.paused = false;
+  replayState.currentTs = null;
+  if (Number.isFinite(stoppedTs)) updateProcessGraphReplayMarker(stoppedTs);
+  updateReplayPauseButton();
 }
 
-function changeCursorCallback(val) {
-  return function () {
-    val_indices = val.split(":");
-    playback.setSelectionRange(val_indices[0], val_indices[1]);
-  };
+function resetReplayView() {
+  groupTime = -1;
+  if (playback) {
+    playback.value = '';
+    playback.scrollTop = 0;
+    try {
+      playback.setSelectionRange(0, 0);
+    } catch (err) {
+      // Ignore if the textarea is not currently focusable.
+    }
+  }
+  syncReplayCursorMode(0);
+  updateProcessGraphReplayMarker(Number(header_record?.starttime) || 0);
 }
 
-function changeScrollCallback(val) {
-  return function () {
-    playback.scrollTop = val;
-  };
+function getReplayCaretPosition() {
+  const selectionEnd = Number(playback?.selectionEnd);
+  return Number.isFinite(selectionEnd) ? selectionEnd : 0;
 }
 
-function drawSvg(data) {
-  if (data.length === 0) {
+function getReplayMirror(style) {
+  const mirror = document.createElement('div');
+  const copiedProps = [
+    'boxSizing', 'width', 'height', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+    'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight',
+    'textTransform', 'textAlign', 'textIndent', 'tabSize'
+  ];
+
+  mirror.style.position = 'absolute';
+  mirror.style.left = '-99999px';
+  mirror.style.top = '0';
+  mirror.style.visibility = 'hidden';
+  mirror.style.whiteSpace = 'pre-wrap';
+  mirror.style.overflowWrap = 'break-word';
+  mirror.style.wordBreak = style.wordBreak;
+  mirror.style.width = `${playback.offsetWidth}px`;
+  copiedProps.forEach((prop) => {
+    mirror.style[prop] = style[prop];
+  });
+  return mirror;
+}
+
+function updateReplaySelectionOverlay() {
+  const overlay = document.getElementById('replaySelectionOverlay');
+  if (!playback || !overlay) return;
+
+  overlay.replaceChildren();
+  if (!isReplayVirtualCursorEnabled()) {
+    overlay.style.display = 'none';
     return;
   }
 
-  d3.selectAll("svg > *").remove();
+  const start = Math.max(0, Math.min(Number(playback.selectionStart) || 0, playback.value.length));
+  const end = Math.max(0, Math.min(Number(playback.selectionEnd) || 0, playback.value.length));
+  if (start === end) {
+    overlay.style.display = 'none';
+    return;
+  }
+
+  const frame = document.getElementById('replayFrame');
+  if (!frame) return;
+
+  const selectionStart = Math.min(start, end);
+  const selectionEnd = Math.max(start, end);
+  const style = window.getComputedStyle(playback);
+  const mirror = getReplayMirror(style);
+  const selected = document.createElement('span');
+  selected.textContent = playback.value.slice(selectionStart, selectionEnd);
+
+  mirror.appendChild(document.createTextNode(playback.value.slice(0, selectionStart)));
+  mirror.appendChild(selected);
+  mirror.appendChild(document.createTextNode(playback.value.slice(selectionEnd) || '.'));
+  document.body.appendChild(mirror);
+
+  const mirrorRect = mirror.getBoundingClientRect();
+  const playbackRect = playback.getBoundingClientRect();
+  const frameRect = frame.getBoundingClientRect();
+  const visibleTop = playbackRect.top - frameRect.top;
+  const visibleLeft = playbackRect.left - frameRect.left;
+  const visibleBottom = visibleTop + playback.clientHeight;
+  const visibleRight = visibleLeft + playback.clientWidth;
+
+  overlay.style.left = `${visibleLeft}px`;
+  overlay.style.top = `${visibleTop}px`;
+  overlay.style.width = `${playback.clientWidth}px`;
+  overlay.style.height = `${playback.clientHeight}px`;
+
+  Array.from(selected.getClientRects()).forEach((rect) => {
+    const left = playbackRect.left - frameRect.left + (rect.left - mirrorRect.left) - playback.scrollLeft;
+    const top = playbackRect.top - frameRect.top + (rect.top - mirrorRect.top) - playback.scrollTop;
+    const right = left + rect.width;
+    const bottom = top + rect.height;
+    const clippedLeft = Math.max(left, visibleLeft);
+    const clippedTop = Math.max(top, visibleTop);
+    const clippedRight = Math.min(right, visibleRight);
+    const clippedBottom = Math.min(bottom, visibleBottom);
+    if (clippedRight <= clippedLeft || clippedBottom <= clippedTop) return;
+
+    const segment = document.createElement('div');
+    segment.className = 'replay-selection-segment';
+    segment.style.left = `${clippedLeft - visibleLeft}px`;
+    segment.style.top = `${clippedTop - visibleTop}px`;
+    segment.style.width = `${clippedRight - clippedLeft}px`;
+    segment.style.height = `${clippedBottom - clippedTop}px`;
+    overlay.appendChild(segment);
+  });
+
+  document.body.removeChild(mirror);
+  overlay.style.display = overlay.childElementCount > 0 ? 'block' : 'none';
+}
+
+function updateReplayCaretOverlay(position = getReplayCaretPosition()) {
+  const caret = document.getElementById('replayCaretOverlay');
+  if (!playback || !caret) return;
+  updateReplaySelectionOverlay();
+  if (!isReplayVirtualCursorEnabled()) {
+    caret.style.display = 'none';
+    return;
+  }
+
+  const pos = Math.max(0, Math.min(Number(position) || 0, playback.value.length));
+  const frame = document.getElementById('replayFrame');
+  if (!frame) return;
+
+  const style = window.getComputedStyle(playback);
+  const mirror = getReplayMirror(style);
+
+  const before = document.createTextNode(playback.value.slice(0, pos));
+  const marker = document.createElement('span');
+  marker.textContent = '\u200b';
+  const afterChar = playback.value.slice(pos, pos + 1);
+  const after = document.createTextNode(afterChar || '.');
+  mirror.appendChild(before);
+  mirror.appendChild(marker);
+  mirror.appendChild(after);
+  document.body.appendChild(mirror);
+
+  const markerRect = marker.getBoundingClientRect();
+  const mirrorRect = mirror.getBoundingClientRect();
+  const playbackRect = playback.getBoundingClientRect();
+  const frameRect = frame.getBoundingClientRect();
+  const lineHeight = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.2 || 18;
+
+  const left = playbackRect.left - frameRect.left + (markerRect.left - mirrorRect.left) - playback.scrollLeft;
+  const top = playbackRect.top - frameRect.top + (markerRect.top - mirrorRect.top) - playback.scrollTop;
+
+  document.body.removeChild(mirror);
+
+  const visibleTop = playbackRect.top - frameRect.top;
+  const visibleBottom = visibleTop + playback.clientHeight;
+  const visibleLeft = playbackRect.left - frameRect.left;
+  const visibleRight = visibleLeft + playback.clientWidth;
+
+  if (top + lineHeight < visibleTop || top > visibleBottom || left < visibleLeft || left > visibleRight) {
+    caret.style.display = 'none';
+    return;
+  }
+
+  caret.style.left = `${left}px`;
+  caret.style.top = `${top}px`;
+  caret.style.height = `${lineHeight}px`;
+  caret.style.display = 'block';
+}
+
+function getReplayCaretCoordinates(position = getReplayCaretPosition()) {
+  if (!playback) return null;
+
+  const pos = Math.max(0, Math.min(Number(position) || 0, playback.value.length));
+  const style = window.getComputedStyle(playback);
+  const mirror = getReplayMirror(style);
+
+  const marker = document.createElement('span');
+  marker.textContent = '\u200b';
+  mirror.appendChild(document.createTextNode(playback.value.slice(0, pos)));
+  mirror.appendChild(marker);
+  mirror.appendChild(document.createTextNode(playback.value.slice(pos, pos + 1) || '.'));
+  document.body.appendChild(mirror);
+
+  const markerRect = marker.getBoundingClientRect();
+  const mirrorRect = mirror.getBoundingClientRect();
+  const lineHeight = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.2 || 18;
+  const coords = {
+    left: markerRect.left - mirrorRect.left,
+    top: markerRect.top - mirrorRect.top,
+    lineHeight
+  };
+
+  document.body.removeChild(mirror);
+  return coords;
+}
+
+function ensureReplayCaretVisible(position = getReplayCaretPosition()) {
+  const checkbox = document.getElementById('replayEnsureCaretVisible');
+  if (!checkbox?.checked) return;
+
+  const coords = getReplayCaretCoordinates(position);
+  if (!coords || !playback) return;
+
+  const padding = Math.max(8, coords.lineHeight * 0.5);
+  const caretTop = coords.top;
+  const caretBottom = coords.top + coords.lineHeight;
+  const viewportTop = playback.scrollTop;
+  const viewportBottom = playback.scrollTop + playback.clientHeight;
+
+  if (caretTop < viewportTop + padding) {
+    playback.scrollTop = Math.max(0, caretTop - padding);
+  } else if (caretBottom > viewportBottom - padding) {
+    playback.scrollTop = caretBottom - playback.clientHeight + padding;
+  }
+}
+
+function isReplayVirtualCursorEnabled() {
+  return Boolean(document.getElementById('replayVirtualCursor')?.checked);
+}
+
+function syncReplayCursorMode(position = getReplayCaretPosition()) {
+  const caret = document.getElementById('replayCaretOverlay');
+  const selection = document.getElementById('replaySelectionOverlay');
+  const virtual = isReplayVirtualCursorEnabled();
+
+  playback?.classList?.toggle('replay-virtual-cursor-enabled', virtual);
+
+  if (virtual) {
+    if (document.activeElement === playback) playback.blur();
+    updateReplayCaretOverlay(position);
+    return;
+  }
+
+  if (caret) caret.style.display = 'none';
+  if (selection) {
+    selection.replaceChildren();
+    selection.style.display = 'none';
+  }
+  if (playback && document.activeElement !== playback) {
+    try {
+      playback.focus({ preventScroll: true });
+    } catch (err) {
+      playback.focus();
+    }
+  }
+}
+
+function getCurrentReplayLogicalTimestamp() {
+  if (replayState.currentTs != null && replayState.paused) return replayState.currentTs;
+  if (!replayState.active) return Number(groupTime) > -1 ? Number(groupTime) : Number(header_record?.starttime) || 0;
+  const elapsed = Date.now() - replayState.startedAt;
+  return replayState.mark + (elapsed / Math.max(Number(replayState.speedup) || 1, 0.0001));
+}
+
+let processGraphReplayMarkerFrame = null;
+
+function updateProcessGraphReplayMarker(timestamp = getCurrentReplayLogicalTimestamp()) {
+  const startTime = Number(header_record?.starttime) || 0;
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts) || !startTime) return;
+
+  document.querySelectorAll('.process-graph-replay-marker').forEach((line) => {
+    const svgRoot = line.ownerSVGElement;
+    const plotWidth = Number(svgRoot?.dataset?.plotWidth);
+    const maxElapsed = Number(svgRoot?.dataset?.maxElapsedMs);
+    if (!Number.isFinite(plotWidth) || !Number.isFinite(maxElapsed) || maxElapsed <= 0) return;
+    const elapsed = Math.max(0, Math.min(maxElapsed, ts - startTime));
+    const xPos = (elapsed / maxElapsed) * plotWidth;
+    line.setAttribute('x1', xPos);
+    line.setAttribute('x2', xPos);
+    line.style.display = '';
+  });
+}
+
+function startProcessGraphReplayMarkerLoop() {
+  stopProcessGraphReplayMarkerLoop();
+
+  const tick = () => {
+    if (!replayState.active) {
+      processGraphReplayMarkerFrame = null;
+      return;
+    }
+
+    const logicalTs = getCurrentReplayLogicalTimestamp();
+    const endTs = Number(header_record?.endtime);
+    updateProcessGraphReplayMarker(logicalTs);
+
+    if (Number.isFinite(endTs) && logicalTs >= endTs) {
+      replayState.active = false;
+      replayState.currentTs = endTs;
+      updateProcessGraphReplayMarker(endTs);
+      updateReplayPauseButton();
+      processGraphReplayMarkerFrame = null;
+      return;
+    }
+
+    processGraphReplayMarkerFrame = requestAnimationFrame(tick);
+  };
+
+  processGraphReplayMarkerFrame = requestAnimationFrame(tick);
+}
+
+function stopProcessGraphReplayMarkerLoop() {
+  if (processGraphReplayMarkerFrame != null) {
+    cancelAnimationFrame(processGraphReplayMarkerFrame);
+    processGraphReplayMarkerFrame = null;
+  }
+}
+
+function replayPauseToggle() {
+  if (replayState.paused) {
+    const speedup = replayState.speedup || 1;
+    replayStart(speedup);
+    return;
+  }
+
+  if (!replayState.active) return;
+  const speedup = replayState.speedup || 1;
+  const logicalTs = getCurrentReplayLogicalTimestamp();
+  clearReplayTimers();
+  setReplayStartTimestamp(logicalTs, 'before');
+  replayState = {
+    active: false,
+    paused: true,
+    speedup,
+    mark: logicalTs,
+    startedAt: 0,
+    currentTs: logicalTs
+  };
+  groupTime = logicalTs;
+  updateReplayPauseButton();
+}
+
+function changeValueCallback(val, ts) {
+  return function () {
+    replayState.currentTs = Number(ts);
+    playback.value = val;
+    ensureReplayCaretVisible();
+    syncReplayCursorMode();
+    updateProcessGraphReplayMarker(ts);
+  };
+}
+
+function changeCursorCallback(val, ts) {
+  return function () {
+    replayState.currentTs = Number(ts);
+    val_indices = val.split(":");
+    playback.setSelectionRange(val_indices[0], val_indices[1]);
+    ensureReplayCaretVisible(val_indices[1]);
+    syncReplayCursorMode(val_indices[1]);
+    updateProcessGraphReplayMarker(ts);
+  };
+}
+
+function changeScrollCallback(val, ts) {
+  return function () {
+    replayState.currentTs = Number(ts);
+    playback.scrollTop = val;
+    syncReplayCursorMode();
+    updateProcessGraphReplayMarker(ts);
+  };
+}
+
+function drawSvgInto(svgSelector, graphData) {
+  const textSeries = Array.isArray(graphData?.textSeries) ? graphData.textSeries : [];
+  const positionSeries = Array.isArray(graphData?.positionSeries) ? graphData.positionSeries : [];
+  const pauseSeries = Array.isArray(graphData?.pauseSeries) ? graphData.pauseSeries : [];
+  const pauseAxisMin = Number.isFinite(Number(graphData?.pauseAxisMin)) ? Number(graphData.pauseAxisMin) : 0;
+  const pauseAxisMax = Number.isFinite(Number(graphData?.pauseAxisMax)) ? Number(graphData.pauseAxisMax) : null;
+
+  if (textSeries.length === 0) {
+    return;
+  }
+
+  const svgRoot = d3.select(svgSelector);
+  if (svgRoot.empty()) return;
+
+  svgRoot.selectAll("*").remove();
   //    var svg = d3.select("svg"),
   //            margin = {top: 20, right: 20, bottom: 30, left: 50},
   //    width = +svg.attr("width") - margin.left - margin.right,
   //            height = +svg.attr("height") - margin.top - margin.bottom,
   //            g = svg.append("g").attr("transform", "translate(" + margin.left + "," + margin.top + ")");
 
+  const svgNode = svgRoot.node();
+  const svgBounds = svgNode?.getBoundingClientRect?.() || { width: 960, height: 500 };
+  const parentNode = svgNode?.closest?.('.process-graph-tool') || svgNode?.parentElement;
+  const parentBounds = parentNode?.getBoundingClientRect?.() || null;
+  const measuredWidth = parentBounds?.width || svgBounds.width;
+  const measuredHeight = svgBounds.height || parentBounds?.height;
   var margin = {top: 20, right: 60, bottom: 50, left: 50},
-      width = 960 - margin.left - margin.right,
-      height = 500 - margin.top - margin.bottom;
+      outerWidth = Math.max(320, Math.round(measuredWidth) || 960),
+      outerHeight = Math.max(240, Math.round(measuredHeight) || 500),
+      width = Math.max(120, outerWidth - margin.left - margin.right),
+      height = Math.max(120, outerHeight - margin.top - margin.bottom);
 
-  // parse the date / time
-  //var parseTime = d3.timeParse("%d-%b-%y");
-  var parseTime = d3.timeParse("%M:%S.%L");
+  var x = d3.scaleLinear().range([0, width]);
+  var yChars = d3.scaleLinear().range([height, 0]);
+  var yPause = d3.scaleLinear().range([height, 0]);
 
-  // set the ranges
-  var x = d3.scaleTime().range([0, width]);
-  var y = d3.scaleLinear().range([height, 0]);
-
-  // define the line
-  var valueline = d3.line()
+  var processLine = d3.line()
     .x(function (d) {
-        return x(d.date);
+        return x(d.elapsed_ms);
         })
   .y(function (d) {
-      return y(d.product);
+      return yChars(d.process);
+        });
+
+  var productLine = d3.line()
+    .x(function (d) {
+        return x(d.elapsed_ms);
+        })
+  .y(function (d) {
+      return yChars(d.product);
       });
 
-  // define the 2nd line
-  var valueline2 = d3.line()
+  var positionLine = d3.line()
     .x(function (d) {
-        return x(d.date);
+        return x(d.elapsed_ms);
         })
   .y(function (d) {
-      return y(d.process);
+      return yChars(d.position);
       });
   // append the svg obgect to the body of the page
   // appends a 'group' element to 'svg'
   // moves the 'group' element to the top left margin
-  var svg = d3.select("svg")
-    .attr("width", width + margin.left + margin.right)
-    .attr("height", height + margin.top + margin.bottom)
+  var svg = svgRoot
+    .attr("width", outerWidth)
+    .attr("height", outerHeight)
+    .attr("viewBox", `0 0 ${outerWidth} ${outerHeight}`)
+    .attr("preserveAspectRatio", "xMidYMid meet")
     .append("g")
     .attr("transform",
         "translate(" + margin.left + "," + margin.top + ")");
@@ -1521,7 +3222,7 @@ function drawSvg(data) {
 
   // gridlines in y axis function
   function make_y_gridlines() {
-    return d3.axisLeft(y)
+    return d3.axisLeft(yChars)
       .ticks(5)
   }
 
@@ -1533,41 +3234,98 @@ function drawSvg(data) {
   //        {date: "2.726", product: "606.98", process: "580.12"}
   //    ];
 
-  // format the data
-  data.forEach(function (d) {
-      d.date = parseTime(d.date);
+  function formatElapsedMs(value) {
+    const totalMs = Math.max(0, Math.round(Number(value) || 0));
+    const minutes = Math.floor(totalMs / 60000);
+    const seconds = Math.floor((totalMs % 60000) / 1000);
+    const millis = totalMs % 1000;
+    return String(minutes).padStart(2, '0') + ':' +
+      String(seconds).padStart(2, '0') + '.' +
+      String(millis).padStart(3, '0');
+  }
+
+  textSeries.forEach(function (d) {
+      d.elapsed_ms = +d.elapsed_ms;
       d.product = +d.product;
       d.process = +d.process;
       });
+  positionSeries.forEach(function (d) {
+      d.elapsed_ms = +d.elapsed_ms;
+      d.position = +d.position;
+      });
+  pauseSeries.forEach(function (d) {
+      d.elapsed_ms = +d.elapsed_ms;
+      d.duration_s = +d.duration_s;
+      });
 
-  // Scale the range of the data
-  x.domain(d3.extent(data, function (d) {
-        return d.date;
-        }));
-  y.domain([0, d3.max(data, function (d) {
-        return Math.max(d.product, d.process);
-        })]);
+  const maxElapsed = d3.max([
+    d3.max(textSeries, function (d) { return d.elapsed_ms; }) || 0,
+    d3.max(positionSeries, function (d) { return d.elapsed_ms; }) || 0,
+    d3.max(pauseSeries, function (d) { return d.elapsed_ms; }) || 0
+  ]) || 0;
+  const maxChars = d3.max([
+    d3.max(textSeries, function (d) { return Math.max(d.product, d.process); }) || 0,
+    d3.max(positionSeries, function (d) { return d.position; }) || 0
+  ]) || 0;
+  const maxPause = d3.max(pauseSeries, function (d) { return d.duration_s; }) || 1;
+  const startTime = Number(header_record?.starttime) || 0;
 
-  // Add the valueline path.
+  x.domain([0, maxElapsed > 0 ? maxElapsed : 1]);
+  yChars.domain([0, Math.max(1, maxChars)]);
+  yPause.domain([
+    Math.max(0, pauseAxisMin),
+    Math.max(Math.max(0, pauseAxisMin) + 0.001, pauseAxisMax === null ? Math.max(1, maxPause) : pauseAxisMax)
+  ]);
+  svgRoot
+    .attr("data-plot-width", width)
+    .attr("data-max-elapsed-ms", maxElapsed > 0 ? maxElapsed : 1);
+
   svg.append("path")
-    .data([data])
-    .attr("class", "line")
-    .attr("d", valueline);
+    .data([textSeries])
+    .attr("fill", "none")
+    .attr("stroke", "#1f77b4")
+    .attr("stroke-width", 2.5)
+    .attr("d", processLine);
 
-  // Add the valueline2 path.
   svg.append("path")
-    .data([data])
-    .attr("class", "line")
-    .style("stroke", "red")
-    .attr("d", valueline2);
+    .data([textSeries])
+    .attr("fill", "none")
+    .attr("stroke", "#2ca02c")
+    .attr("stroke-width", 2.5)
+    .attr("d", productLine);
 
-  // Add the X Axis
+  if (positionSeries.length > 0) {
+    svg.append("path")
+      .data([positionSeries])
+      .attr("fill", "none")
+      .attr("stroke", "#3cb44b")
+      .attr("stroke-width", 2)
+      .attr("stroke-dasharray", "8,5")
+      .attr("opacity", 0.95)
+      .attr("d", positionLine);
+  }
+
+  if (pauseSeries.length > 0) {
+    svg.append("g")
+      .selectAll("circle")
+      .data(pauseSeries)
+      .enter()
+      .append("circle")
+      .attr("cx", function (d) { return x(d.elapsed_ms); })
+      .attr("cy", function (d) { return yPause(d.duration_s); })
+      .attr("r", 3.5)
+      .attr("fill", "#f59e0b");
+  }
+
+  const xAxis = d3.axisBottom(x)
+    .ticks(Math.max(2, Math.floor(width / 120)))
+    .tickFormat(function (value) {
+      return (Number(value) / 1000).toFixed(1);
+    });
+
   svg.append("g")
     .attr("transform", "translate(0," + height + ")")
-    .call(d3.axisBottom(x)
-        .tickFormat(d3.timeFormat("%M:%S.%L"))
-        //.ticks(d3.timeMillisecond.every(500))
-        );
+    .call(xAxis);
 
   svg.append("text")
     //            .attr("x", 480)
@@ -1576,11 +3334,11 @@ function drawSvg(data) {
         "translate(" + (width / 2) + " ," +
         (height + margin.top + 20) + ")")
     .style("text-anchor", "middle")
-    .text("Time");
+    .text("Time (s)");
 
-  // Add the Y Axis
   svg.append("g")
-    .call(d3.axisLeft(y));
+    .call(d3.axisLeft(yPause).ticks(5))
+    .attr("color", "#d97706");
 
   svg.append("text")
     .attr("transform", "rotate(-90)")
@@ -1588,22 +3346,22 @@ function drawSvg(data) {
     .attr("x", 0 - (height / 2))
     .attr("dy", "1em")
     .style("text-anchor", "middle")
+    .style("fill", "#111827")
+    .text("Pause (s)");
+
+  svg.append("g")
+    .attr("transform", "translate(" + width + ",0)")
+    .call(d3.axisRight(yChars).ticks(5));
+
+  svg.append("text")
+    .attr("transform", "rotate(90)")
+    .attr("y", 0 - width - margin.right + 40)
+    .attr("x", height / 2)
+    .attr("dy", "-1em")
+    .style("text-anchor", "middle")
+    .style("fill", "#111827")
     .text("Characters");
 
-  svg.append("text")
-    .attr("transform", "translate(" + (width + 3) + "," + y(data[data.length - 1].process) + ")")
-    .attr("dy", ".35em")
-    .attr("text-anchor", "start")
-    .style("fill", "red")
-    .text("Process");
-
-  svg.append("text")
-    .attr("transform", "translate(" + (width + 3) + "," + y(data[data.length - 1].product) + ")")
-    .attr("dy", ".35em")
-    .attr("text-anchor", "start")
-    .style("fill", "steelblue")
-    .text("Product");
-  // add the X gridlines
   svg.append("g")
     .attr("class", "grid")
     .attr("transform", "translate(0," + height + ")")
@@ -1612,37 +3370,153 @@ function drawSvg(data) {
         .tickFormat("")
         );
 
-  // add the Y gridlines
   svg.append("g")
     .attr("class", "grid")
     .call(make_y_gridlines()
         .tickSize(-width)
         .tickFormat("")
         );
+
+  svg.append("line")
+    .attr("class", "process-graph-replay-marker")
+    .attr("x1", 0)
+    .attr("x2", 0)
+    .attr("y1", 0)
+    .attr("y2", height)
+    .attr("stroke", "#111827")
+    .attr("stroke-width", 2)
+    .attr("stroke-dasharray", "5,4")
+    .attr("opacity", 0.85)
+    .style("pointer-events", "none")
+    .style("display", "none");
+
+  svg.append("rect")
+    .attr("class", "process-graph-click-target")
+    .attr("x", 0)
+    .attr("y", 0)
+    .attr("width", width)
+    .attr("height", height)
+    .attr("fill", "transparent")
+    .style("cursor", "crosshair")
+    .on("click", function (event) {
+      if (!startTime) return;
+      const pointer = d3.pointer(event, this);
+      const elapsedMs = Math.max(0, Math.min(maxElapsed > 0 ? maxElapsed : 1, x.invert(pointer[0])));
+      const targetTs = startTime + elapsedMs;
+      if (typeof setReplayStartTimestamp === "function") {
+        setReplayStartTimestamp(targetTs, "inclusive");
+      }
+      updateProcessGraphReplayMarker(targetTs);
+    });
+
+  const legendItems = [
+    { label: "Process", color: "#1f77b4", dashed: false, point: false },
+    { label: "Product", color: "#2ca02c", dashed: false, point: false },
+    { label: "Position", color: "#3cb44b", dashed: true, point: false },
+    { label: "Pause", color: "#f59e0b", dashed: false, point: true }
+  ];
+  const legend = svg.append("g").attr("transform", "translate(12,8)");
+
+  legendItems.forEach(function (item, index) {
+    const row = legend.append("g").attr("transform", "translate(0," + (index * 22) + ")");
+    if (item.point) {
+      row.append("circle")
+        .attr("cx", 8)
+        .attr("cy", 8)
+        .attr("r", 4)
+        .attr("fill", item.color);
+    } else {
+      row.append("line")
+        .attr("x1", 0)
+        .attr("x2", 22)
+        .attr("y1", 8)
+        .attr("y2", 8)
+        .attr("stroke", item.color)
+        .attr("stroke-width", 2.5)
+        .attr("stroke-dasharray", item.dashed ? "8,5" : null);
+    }
+    row.append("text")
+      .attr("x", 30)
+      .attr("y", 12)
+      .style("font-size", "12px")
+      .style("fill", "#111827")
+      .text(item.label);
+  });
+
+  updateProcessGraphReplayMarker();
+}
+
+function drawSvg(data) {
+  drawSvgInto("#playbackProgressGraph", data);
+}
+
+function refreshProcessGraphIfPossible() {
+  if (!header_record || !header_record.starttime) return;
+  if (!text_record || Object.keys(text_record).length === 0) return;
+  processGraphFormat();
+}
+
+let processGraphRefreshTimer = null;
+function scheduleProcessGraphRefresh() {
+  if (processGraphRefreshTimer) clearTimeout(processGraphRefreshTimer);
+  processGraphRefreshTimer = setTimeout(() => {
+    processGraphRefreshTimer = null;
+    refreshProcessGraphIfPossible();
+  }, 250);
+}
+
+let processGraphResizeObserver = null;
+function bindProcessGraphResizeObserver() {
+  if (typeof ResizeObserver === 'undefined') return;
+  if (processGraphResizeObserver) processGraphResizeObserver.disconnect();
+  processGraphResizeObserver = new ResizeObserver(() => scheduleProcessGraphRefresh());
+
+  const graph = document.getElementById('playbackProgressGraph');
+  const target = graph?.closest?.('.dashboard-panel') || graph;
+  if (target) processGraphResizeObserver.observe(target);
 }
 
 var openFile = function (event) {
   replayStop();
+  resetReplayView();
   var input = event.target;
+  const file = input?.files?.[0];
+  if (!file) return;
 
   var reader = new FileReader();
-  reader.onload = function () {
+  reader.onload = async function () {
     file_text = reader.result;
     try {
-      header_record = JSON.parse(file_text).header_records;
-      text_record = JSON.parse(file_text).text_records;
-      cursor_record = JSON.parse(file_text).cursor_records;
-      key_record = JSON.parse(file_text).key_records;
-      messages.value += 'Read ' + Object.keys(text_record).length + ' text records.\n';
-      messages.scrollTop = messages.scrollHeight;
-      makeRevisionTable();
+      const parsed = JSON.parse(file_text);
+      const records = normalizeWebScriptLogRecords(parsed);
+      if (!parsed?.header_records || !parsed?.text_records || !parsed?.key_records) {
+        throw new Error('Missing required WebScriptLog record groups.');
+      }
+
+      const baseKey = makeWebScriptLogStorageKey('wslog_uploaded', records, file.name);
+      let savedKey = '';
+      try {
+        savedKey = await saveWebScriptLogRecordsToIndexedDB(records, baseKey);
+      } catch (saveErr) {
+        console.error('Could not save uploaded WebScriptLog file to IndexedDB:', saveErr);
+        messages.value += 'Read file, but could not save it to IndexedDB.\n';
+      }
+
+      applyWebScriptLogRecords(records, savedKey || file.name);
+      if (savedKey) {
+        messages.value += `Uploaded file saved to IndexedDB as ${savedKey}.\n`;
+        messages.scrollTop = messages.scrollHeight;
+      }
     } catch (err) {
+      console.error('Could not import WebScriptLog file:', err);
       messages.value += "Not a ScriptLog.js file, can't read.\n";
       messages.scrollTop = messages.scrollHeight;
+    } finally {
+      if (input) input.value = '';
     }
     //console.log(reader.result.substring(0, 200));
   };
-  reader.readAsText(input.files[0]);
+  reader.readAsText(file);
 };
 
 /*
@@ -1686,8 +3560,12 @@ function checkUserCode(input) {
 
 	if (sanitizedValue.length === 6) {
   	$('#b_record').prop('disabled', false);
+    $('#b_emulate').prop('disabled', false);
+    $('#b_linearlog').prop('disabled', false);
   } else {
   	$('#b_record').prop('disabled', true);
+    $('#b_emulate').prop('disabled', true);
+    $('#b_linearlog').prop('disabled', true);
 	}
 }
 
@@ -1716,6 +3594,18 @@ async function getJsonFromIDB(key) {
   // Inflate gzip -> string
   return pako.inflate(bytes, { to: 'string' });
 }
+
+function makeStorageKeyForCode(code) {
+  const d = new Date();
+  return "wslog_" + code + "_" +
+    ("0" + d.getDate()).slice(-2) + "-" +
+    ("0" + (d.getMonth() + 1)).slice(-2) + "-" +
+    d.getFullYear() + "_" +
+    ("0" + d.getHours()).slice(-2) + ":" +
+    ("0" + d.getMinutes()).slice(-2) + ":" +
+    ("0" + d.getSeconds()).slice(-2);
+}
+
 
 //var my_uuidv4;
 var sid;
@@ -1776,6 +3666,8 @@ function init() {
   //recorder = document.getElementById("recordingLog");
   playback = document.getElementById("playback");
   messages = document.getElementById("messages");
+  recorderImageOverlayActive = false;
+  document.getElementById("recorderFrame")?.classList.remove("image-overlay-active");
 
   recorder.readOnly = true;
   //recorder.recording = false;
@@ -1784,7 +3676,10 @@ function init() {
   //recorder.style.fontSize = "large";
   playback.style.fontFamily = "Calibri, Georgia, serif";
   //playback.style.fontSize = "large";
-  //playback.readOnly = true;
+  playback.readOnly = false;
+  bindPlaybackEditGuard();
+  syncReplayRecorderSize();
+  bindProcessGraphResizeObserver();
   //playback.disabled = true;
   messages.readOnly = true;
 
@@ -1796,6 +3691,8 @@ function init() {
   header_record = {};
   key_record = {};
   text_record = {};
+  image_record = {};
+  window_record = {};
   text_record_keeper = {};
   cursor_record = {};
   cursor_record_keeper = {};
@@ -1810,6 +3707,53 @@ function init() {
 	// disabling record here because we need code
   $('#b_record').prop('disabled', true);
   $('#b_recstop').prop('disabled', true);
+  $('#b_image').prop('disabled', true);
+  $('#b_emulate').prop('disabled', true);
+
+  if (!window._pauseThresholdRefreshBound) {
+    const handlePauseThresholdChange = (event) => {
+      if (!event.target?.matches?.('#playbackWritingScorePauseCrit')) return;
+      if (header_record?.starttime && text_record && Object.keys(text_record).length > 0 && typeof showWritingScore === 'function') {
+        showWritingScore();
+      }
+    };
+    document.addEventListener('input', handlePauseThresholdChange);
+    document.addEventListener('change', handlePauseThresholdChange);
+    window._pauseThresholdRefreshBound = true;
+  }
+
+  if (!window._processGraphControlsBound) {
+    const handleProcessGraphControlChange = (event) => {
+      if (!event.target?.matches?.('#processGraphPauseThreshold, #processGraphPauseMin, #processGraphPauseMax')) return;
+      scheduleProcessGraphRefresh();
+    };
+    document.addEventListener('input', handleProcessGraphControlChange);
+    document.addEventListener('change', handleProcessGraphControlChange);
+    window._processGraphControlsBound = true;
+  }
+
+  if (!window._replayOptionsBound) {
+    document.addEventListener('change', (event) => {
+      if (event.target?.matches?.('#replayUseRecorderSize')) {
+        syncReplayRecorderSize();
+      }
+      if (event.target?.matches?.('#replayEnsureCaretVisible')) {
+        syncReplayCursorMode();
+      }
+      if (event.target?.matches?.('#replayVirtualCursor')) {
+        syncReplayCursorMode();
+      }
+    });
+    window.addEventListener('resize', syncReplayRecorderSize);
+    window._replayOptionsBound = true;
+  }
+
+  if (!window._recorderOverlayResizeBound) {
+    window.addEventListener("resize", () => {
+      if (recorderImageOverlayActive) drawRecorderImageOverlay();
+    });
+    window._recorderOverlayResizeBound = true;
+  }
 
   //drawSvg();
 
