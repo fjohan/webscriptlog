@@ -119,6 +119,41 @@ if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
 		</div>
 	</template>
 
+  <!-- MOBILE NOTES -->
+  <template id="panel-MOBILE_NOTES">
+    <div id="mobileNotesApp" class="mobile-notes-app">
+      <div class="mobile-notes-toolbar">
+        <div>
+          <button type="button" id="mobileNotesHome" class="mobile-notes-home">Mobile Notes</button>
+          <div id="mobileNotesStatus" class="mobile-notes-status">Prototype recorder</div>
+        </div>
+        <label class="mobile-notes-code">
+          Code
+          <input type="text" id="mobileNotesCode" maxlength="6" autocomplete="false" autocorrect="false" spellcheck="false">
+        </label>
+      </div>
+
+      <div id="mobileNotesOverview" class="mobile-notes-overview">
+        <div class="mobile-notes-actions">
+          <button class="sl_button" type="button" id="mobileNotesNew">New note</button>
+          <button class="sl_button" type="button" id="mobileNotesCommitActive" disabled>Commit active note</button>
+        </div>
+        <div id="mobileNotesGrid" class="mobile-notes-grid"></div>
+      </div>
+
+      <div id="mobileNotesEditorShell" class="mobile-notes-editor-shell" hidden>
+        <div class="mobile-notes-editor-bar">
+          <input type="text" id="mobileNotesTitle" class="mobile-notes-title" placeholder="Untitled note">
+          <button class="sl_button" type="button" id="mobileNotesCommitOpen">Commit snapshot</button>
+        </div>
+        <div class="mobile-notes-editor-wrap">
+          <textarea id="mobileNotesEditor" class="mobile-notes-editor" autocomplete="false" autocorrect="true" spellcheck="true" placeholder="Write this note..."></textarea>
+          <div id="mobileNotesCaret" class="mobile-notes-caret" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+  </template>
+
   <!-- REPLAY -->
   <template id="panel-REPLAY">
     <div id="playbackLayoutShell">

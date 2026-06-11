@@ -10,6 +10,9 @@ const UI = [
     ["EMULATE", "b_emulate", emulateRecordingFromUI],
   ]],
 
+  ["MOBILE_NOTES", [
+  ]],
+
   ["REPLAY", [
     ["REPLAY",              "b_replay",       replayNormal],
     ["FAST_FORWARD",        "b_fastforward",  replayFast],
@@ -277,4 +280,6 @@ function initUI() {
       btn.setAttribute("aria-selected", name === tabName ? "true" : "false");
     }
   }
+
+  window.activateWebScriptLogTab = activateTab;
 }
