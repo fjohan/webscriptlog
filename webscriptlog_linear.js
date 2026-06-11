@@ -1145,6 +1145,39 @@ function findNavigationRunEnd(keyEntries, keyIndex, keyName) {
   return { endIndex, keyupIndex: -1 };
 }
 
+function countNavigationRunKeyEvents(keyEntries, keyIndex, keyName, runInfo) {
+  const endIndex = Number.isFinite(runInfo?.endIndex) ? runInfo.endIndex : keyIndex;
+  let count = 0;
+
+  for (let i = keyIndex; i <= endIndex && i < keyEntries.length; i++) {
+    const raw = String(keyEntries[i]?.value || '');
+    if (raw === `keydown: ${keyName}` || raw === `repeat: ${keyName}`) count += 1;
+  }
+
+  return Math.max(1, count);
+}
+
+function applyNavigationKeyRunToSelection(keyName, currentText, currentStart, currentEnd, count = 1) {
+  const textLength = String(currentText || '').length;
+  const cursorMin = Math.min(currentStart, currentEnd);
+  const cursorMax = Math.max(currentStart, currentEnd);
+  const hasSelection = cursorMin !== cursorMax;
+  const n = Math.max(1, Number(count) || 1);
+
+  if (keyName === 'ArrowLeft') {
+    const firstPos = hasSelection ? cursorMin : Math.max(0, cursorMin - 1);
+    const pos = Math.max(0, firstPos - (hasSelection ? n - 1 : 0));
+    return { start: pos, end: pos };
+  }
+  if (keyName === 'ArrowRight') {
+    const firstPos = hasSelection ? cursorMax : Math.min(textLength, cursorMax + 1);
+    const pos = Math.min(textLength, firstPos + (hasSelection ? n - 1 : 0));
+    return { start: pos, end: pos };
+  }
+
+  return applyNavigationKeyToSelection(keyName, currentText, currentStart, currentEnd);
+}
+
 function makeCollapsedSelectionState(pos) {
   const value = Math.max(0, Number(pos) || 0);
   return {
@@ -2169,35 +2202,41 @@ function appendLinearNavigationEvent(parts, keyEntries, keyIndex, cursorRecords,
   }
 
   const runInfo = findNavigationRunEnd(keyEntries, keyIndex, keyName);
-  const cursor = findCursorForNavigationKey(keyEntries, keyIndex, keyName, cursorRecords);
+  const runCount = countNavigationRunKeyEvents(keyEntries, keyIndex, keyName, runInfo);
+  const consumedCount = Math.max(1, (runInfo.keyupIndex !== -1 ? runInfo.keyupIndex : runInfo.endIndex) - keyIndex + 1);
+  const activityTs = keyEntries[keyIndex + consumedCount - 1]?.ts ?? keyEntry.ts;
+  const runEndCursor = runCount > 1 && runInfo.keyupIndex !== -1
+    ? parseCursorRecord(cursorRecords[String(keyEntries[runInfo.keyupIndex].ts)] ?? cursorRecords[keyEntries[runInfo.keyupIndex].ts])
+    : null;
+  const cursor = runEndCursor || findCursorForNavigationKey(keyEntries, keyIndex, keyName, cursorRecords);
   const predicted = modifiers.shift
-    ? applyShiftNavigationKeyToSelection(keyName, currentText, currentState.anchor, currentState.focus, 1)
-    : applyNavigationKeyToSelection(keyName, currentText, currentState.start, currentState.end);
+    ? applyShiftNavigationKeyToSelection(keyName, currentText, currentState.anchor, currentState.focus, runCount)
+    : applyNavigationKeyRunToSelection(keyName, currentText, currentState.start, currentState.end, runCount);
   let emitted = false;
 
   if (modifiers.shift && keyName === 'ArrowLeft') {
-    parts.push(makeLinearCountToken('SLEFT', 1));
+    parts.push(makeLinearCountToken('SLEFT', runCount));
     emitted = true;
   } else if (modifiers.shift && keyName === 'ArrowRight') {
-    parts.push(makeLinearCountToken('SRIGHT', 1));
+    parts.push(makeLinearCountToken('SRIGHT', runCount));
     emitted = true;
   } else if (modifiers.shift && keyName === 'ArrowUp') {
-    parts.push(makeLinearCountToken('SUP', 1));
+    parts.push(makeLinearCountToken('SUP', runCount));
     emitted = true;
   } else if (modifiers.shift && keyName === 'ArrowDown') {
-    parts.push(makeLinearCountToken('SDOWN', 1));
+    parts.push(makeLinearCountToken('SDOWN', runCount));
     emitted = true;
   } else if (keyName === 'ArrowLeft') {
-    parts.push(makeLinearCountToken('LEFT', 1));
+    parts.push(makeLinearCountToken('LEFT', runCount));
     emitted = true;
   } else if (keyName === 'ArrowRight') {
-    parts.push(makeLinearCountToken('RIGHT', 1));
+    parts.push(makeLinearCountToken('RIGHT', runCount));
     emitted = true;
   } else if (keyName === 'ArrowUp') {
-    parts.push(makeLinearCountToken('UP', 1));
+    parts.push(makeLinearCountToken('UP', runCount));
     emitted = true;
   } else if (keyName === 'ArrowDown') {
-    parts.push(makeLinearCountToken('DOWN', 1));
+    parts.push(makeLinearCountToken('DOWN', runCount));
     emitted = true;
   } else if (keyName === 'Home') {
     parts.push('<HOME>');
@@ -2221,8 +2260,8 @@ function appendLinearNavigationEvent(parts, keyEntries, keyIndex, cursorRecords,
       parts.push(keyName === 'ArrowLeft' ? '<LEFT_TO_START>' : '<RIGHT_TO_END>');
       return {
         ...makeCollapsedSelectionState(cursor.start),
-        consumed: runInfo.keyupIndex - keyIndex + 1,
-        activityTs: keyEntries[runInfo.keyupIndex].ts,
+        consumed: consumedCount,
+        activityTs,
         navigated: true
       };
     }
@@ -2240,7 +2279,7 @@ function appendLinearNavigationEvent(parts, keyEntries, keyIndex, cursorRecords,
   ) {
     return null;
   }
-  if (!cursor) return { ...predicted, consumed: 1, activityTs: keyEntry.ts, navigated: true };
+  if (!cursor) return { ...predicted, consumed: consumedCount, activityTs, navigated: true };
 
   if (predicted.start !== cursor.start || predicted.end !== cursor.end) {
     if (cursor.start === cursor.end) parts.push(`<NAV${cursor.start}>`);
@@ -2248,10 +2287,10 @@ function appendLinearNavigationEvent(parts, keyEntries, keyIndex, cursorRecords,
   }
 
   if (modifiers.shift) {
-    if (keyName === 'ArrowLeft' || keyName === 'ArrowUp') return { ...makeSelectionStateFromRange(cursor.start, cursor.end, 'start'), consumed: 1, activityTs: keyEntry.ts, navigated: true };
-    if (keyName === 'ArrowRight' || keyName === 'ArrowDown') return { ...makeSelectionStateFromRange(cursor.start, cursor.end, 'end'), consumed: 1, activityTs: keyEntry.ts, navigated: true };
+    if (keyName === 'ArrowLeft' || keyName === 'ArrowUp') return { ...makeSelectionStateFromRange(cursor.start, cursor.end, 'start'), consumed: consumedCount, activityTs, navigated: true };
+    if (keyName === 'ArrowRight' || keyName === 'ArrowDown') return { ...makeSelectionStateFromRange(cursor.start, cursor.end, 'end'), consumed: consumedCount, activityTs, navigated: true };
   }
-  return { ...makeSelectionStateFromRange(cursor.start, cursor.end), consumed: 1, activityTs: keyEntry.ts, navigated: true };
+  return { ...makeSelectionStateFromRange(cursor.start, cursor.end), consumed: consumedCount, activityTs, navigated: true };
 }
 
 function applyNavigationKeyToSelection(keyName, currentText, currentStart, currentEnd) {
@@ -3677,25 +3716,31 @@ function linearRepresentationToSyntheticRecords(linear, starttime = 0) {
           : action.command === 'SUP'
             ? 'ArrowUp'
             : 'ArrowDown';
-      for (let j = 0; j < action.count; j++) {
-        const shiftDownTs = nextTs(consumeDelayForRelevantOffset(50, 50));
-        records.key_records[shiftDownTs] = 'keydown: Shift';
-        setCursorRecord(shiftDownTs);
-        const arrowDownTs = nextTs(50);
-        records.key_records[arrowDownTs] = `keydown: ${keyName}`;
+      const repeatCount = Math.max(1, Number(action.count) || 1);
+      const shiftDownTs = nextTs(consumeDelayForRelevantOffset(50, 50));
+      records.key_records[shiftDownTs] = 'keydown: Shift';
+      setCursorRecord(shiftDownTs);
+      let arrowTs = nextTs(50);
+      records.key_records[arrowTs] = `keydown: ${keyName}`;
+      for (let j = 0; j < repeatCount; j++) {
+        if (j > 0) {
+          arrowTs = nextTs(50);
+          records.key_records[arrowTs] = `repeat: ${keyName}`;
+        }
         const nextState = applyShiftNavigationKeyToSelection(keyName, text, selectionAnchor, selectionFocus, 1);
         selectionStart = nextState.start;
         selectionEnd = nextState.end;
         selectionAnchor = nextState.anchor;
         selectionFocus = nextState.focus;
-        const arrowUpTs = nextTs(50);
-        records.key_records[arrowUpTs] = `keyup: ${keyName}`;
-        setCursorRecord(arrowUpTs);
-        lastRelevantTs = arrowUpTs;
-        const shiftUpTs = nextTs(50);
-        records.key_records[shiftUpTs] = 'keyup: Shift';
-        setCursorRecord(shiftUpTs);
+        setCursorRecord(arrowTs);
       }
+      const arrowUpTs = nextTs(50);
+      records.key_records[arrowUpTs] = `keyup: ${keyName}`;
+      setCursorRecord(arrowUpTs);
+      lastRelevantTs = arrowUpTs;
+      const shiftUpTs = nextTs(50);
+      records.key_records[shiftUpTs] = 'keyup: Shift';
+      setCursorRecord(shiftUpTs);
       continue;
     }
 
