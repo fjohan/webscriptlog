@@ -1,1 +1,10 @@
-This dir contains a prototypical solution. For production, real credentials for an mysql database is needed.
+This dir contains a prototypical server-side save/read solution.
+
+If `fake.inc` exists and defines `DB_HOST`, `DB_USER`, `DB_PASSWD`, and `DB_NAME`, `putdata.php` and `getdata.php` use the MySQL `records` table.
+
+If that config file is missing, the scripts fall back to plain files. Records are saved as JSON files in `php/logdata/` by default. Set the `WEBSCRIPTLOG_FILE_STORE` environment variable to use another writable directory.
+
+The public endpoint format is unchanged:
+- `putdata.php` accepts POST `id` and `response`
+- `getdata.php` accepts POST `id`, `startlimit`, and `endlimit`
+- `getdata.php` returns tab-separated rows: `published_on`, `user`, `data`, row index
