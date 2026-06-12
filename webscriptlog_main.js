@@ -174,16 +174,33 @@ function getDiffKeysChangedText(previousText, currentText, prefixLength, suffixL
   return inserted;
 }
 
+function getDiffKeysKeyValue(raw, prefix) {
+  const value = String(raw || "");
+  return value.startsWith(prefix) ? value.slice(prefix.length) : "";
+}
+
+function findDiffKeysMatchingKeyup(keyEntries, keydownEntry) {
+  if (!keydownEntry) return null;
+  const key = getDiffKeysKeyValue(keydownEntry.value, "keydown: ");
+  if (!key) return null;
+
+  for (const entry of keyEntries) {
+    if (entry.ts <= keydownEntry.ts) continue;
+    const raw = String(entry.value || "");
+    if (raw.startsWith("keyup: ") && getDiffKeysKeyValue(raw, "keyup: ") === key) return entry;
+  }
+
+  return null;
+}
+
 function buildDiffKeysRows(records = {}) {
   const textEntries = getDiffKeysSortedEntries(records.text_records || {});
   const keyEntries = getDiffKeysSortedEntries(records.key_records || {});
   const startTime = Number(records.header_records?.starttime);
   const keydowns = keyEntries.filter((entry) => String(entry.value || "").startsWith("keydown: "));
-  const keyups = keyEntries.filter((entry) => String(entry.value || "").startsWith("keyup: "));
   const rows = [];
   let previousText = "";
   let keydownIndex = 0;
-  let keyupIndex = 0;
 
   for (let i = 0; i < textEntries.length; i++) {
     const entry = textEntries[i];
@@ -205,19 +222,23 @@ function buildDiffKeysRows(records = {}) {
 
     while (keydownIndex < keydowns.length && keydowns[keydownIndex].ts <= entry.ts) keydownIndex += 1;
     const precedingKeydown = keydownIndex > 0 ? keydowns[keydownIndex - 1] : null;
-
-    while (keyupIndex < keyups.length && keyups[keyupIndex].ts < entry.ts) keyupIndex += 1;
-    const followingKeyup = keyupIndex < keyups.length ? keyups[keyupIndex] : null;
+    const matchingKeyup = findDiffKeysMatchingKeyup(keyEntries, precedingKeydown);
+    const keydownValue = getDiffKeysKeyValue(precedingKeydown?.value, "keydown: ");
+    const keyupValue = getDiffKeysKeyValue(matchingKeyup?.value, "keyup: ");
 
     rows.push({
       id: i + 1,
+      textDataTimestamp: entry.ts,
       prefixLength,
       totalLength: currentText.length,
       keydownTime: formatDiffKeysTime(precedingKeydown?.ts, startTime),
-      keyupTime: formatDiffKeysTime(followingKeyup?.ts, startTime),
-      keydownValue: precedingKeydown ? String(precedingKeydown.value || "").slice("keydown: ".length) : "",
-      keyupValue: followingKeyup ? String(followingKeyup.value || "").slice("keyup: ".length) : "",
-      changedText: getDiffKeysChangedText(previousText, currentText, prefixLength, suffixLength)
+      keyupTime: formatDiffKeysTime(matchingKeyup?.ts, startTime),
+      keydownValue,
+      keyupValue,
+      keyMatch: precedingKeydown ? (matchingKeyup ? "matched" : "missing-keyup") : "missing-keydown",
+      changedText: getDiffKeysChangedText(previousText, currentText, prefixLength, suffixLength),
+      removed: previousText.slice(prefixLength, previousText.length - suffixLength),
+      inserted: currentText.slice(prefixLength, currentText.length - suffixLength)
     });
 
     previousText = currentText;
@@ -249,6 +270,7 @@ function renderDiffKeysPane(records = null) {
       <td>${escapeDiffKeysHtml(row.keyupTime)}</td>
       <td>${escapeDiffKeysHtml(row.keydownValue)}</td>
       <td>${escapeDiffKeysHtml(row.keyupValue)}</td>
+      <td>${escapeDiffKeysHtml(row.keyMatch)}</td>
       <td class="diff-keys-text">${escapeDiffKeysHtml(row.changedText)}</td>
     </tr>
   `).join("");
@@ -264,7 +286,412 @@ function renderDiffKeysPane(records = null) {
           <th>keyup time</th>
           <th>keydown value</th>
           <th>keyup value</th>
+          <th>key match</th>
           <th>text changed</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+    </table>
+  `;
+}
+
+function buildWordHistoryTextData(records = {}) {
+  const headerStart = Number(records.header_records?.starttime);
+  const ftr = {};
+  if (Number.isFinite(headerStart)) ftr[String(headerStart)] = "";
+  Object.assign(ftr, records.text_records || {});
+
+  return Object.keys(ftr)
+    .map((key) => ({ time: Number(key), text: String(ftr[key] ?? "") }))
+    .filter((item) => Number.isFinite(item.time))
+    .sort((a, b) => a.time - b.time)
+    .map((item, index) => ({
+      index,
+      time: item.time,
+      text: item.text
+    }));
+}
+
+function buildWordHistoryFinalCharacterRows(records = {}) {
+  const dmp = typeof diff_match_patch === "function" ? new diff_match_patch() : myDmp;
+  const textData = buildWordHistoryTextData(records);
+  const textList = [];
+
+  for (let index = 1; index < textData.length; index++) {
+    const item = textData[index];
+    const prev = textData[index - 1];
+    const diffs = dmp.diff_main(prev.text, item.text);
+    dmp.diff_cleanupSemantic(diffs);
+
+    let currentPosition = 0;
+    diffs.forEach(([operation, text]) => {
+      if (operation === 0) {
+        currentPosition += text.length;
+        return;
+      }
+      if (operation === 1) {
+        const timeSincePrev = item.time - prev.time;
+        const timeUntilNext = (textData[index + 1] ? textData[index + 1].time : item.time) - item.time;
+        for (const character of text) {
+          textList.splice(currentPosition, 0, {
+            character,
+            textDataIndex: item.index,
+            textDataTimestamp: item.time,
+            timeSincePrev,
+            timeUntilNext
+          });
+          currentPosition += 1;
+        }
+        return;
+      }
+      if (operation === -1) {
+        for (let i = 0; i < text.length; i++) textList.splice(currentPosition, 1);
+      }
+    });
+  }
+
+  return textList.map((item, position) => ({
+    position,
+    character: item.character,
+    textDataIndex: item.textDataIndex,
+    textDataTimestamp: item.textDataTimestamp,
+    timeSincePrev: item.timeSincePrev,
+    timeUntilNext: item.timeUntilNext
+  }));
+}
+
+function joinWordHistoryFinalTextAndDiffKeys(records = {}) {
+  const ftRows = buildWordHistoryFinalCharacterRows(records);
+  const dkRows = buildDiffKeysRows(records);
+  const dkById = new Map(dkRows.map((row) => [row.id, row]));
+
+  return ftRows.map((ft) => {
+    const dk = dkById.get(ft.textDataIndex) || null;
+    return {
+      position: ft.position,
+      character: ft.character,
+      textDataIndex_id: ft.textDataIndex,
+      textDataTimestamp: ft.textDataTimestamp,
+      timeSincePrev: ft.timeSincePrev,
+      timeUntilNext: ft.timeUntilNext,
+      dk_prefixLength: dk?.prefixLength ?? "",
+      dk_totalLength: dk?.totalLength ?? "",
+      dk_keydownTime: dk?.keydownTime ?? "",
+      dk_keyupTime: dk?.keyupTime ?? "",
+      dk_keydownValue: dk?.keydownValue ?? "",
+      dk_keyupValue: dk?.keyupValue ?? "",
+      dk_keyMatch: dk?.keyMatch ?? "",
+      dk_changedText: dk?.changedText ?? "",
+      dk_removed: dk?.removed ?? "",
+      dk_inserted: dk?.inserted ?? ""
+    };
+  });
+}
+
+function getWordHistoryFinalWordsFromJoined(joinedRows) {
+  const finalText = joinedRows.map((row) => row.character).join("");
+  const words = [];
+  const re = /[^\s]+/gu;
+  let match;
+
+  while ((match = re.exec(finalText)) !== null) {
+    words.push({
+      index: words.length + 1,
+      word: match[0],
+      start: match.index,
+      end: match.index + match[0].length
+    });
+  }
+
+  return words;
+}
+
+function getWordHistoryNumericId(row) {
+  const value = Number(row?.textDataIndex_id);
+  return Number.isFinite(value) ? value : null;
+}
+
+function getWordHistoryNumericValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function getWordHistoryInsertedLength(row) {
+  return String(row?.dk_inserted ?? "").length;
+}
+
+function isWordHistoryBoundaryChar(char) {
+  return char == null || /\s/u.test(String(char));
+}
+
+function isWordHistorySingleCharacterInsertionAt(row, position) {
+  return getWordHistoryNumericValue(row?.dk_prefixLength) === position &&
+    getWordHistoryInsertedLength(row) === 1 &&
+    !row?.dk_removed;
+}
+
+function isWordHistorySingleCharacterInsertion(row) {
+  return getWordHistoryInsertedLength(row) === 1 && !row?.dk_removed;
+}
+
+function classifyWordHistoryInitialBoundaryTiming(joinedRows, word) {
+  const first = joinedRows[word.start];
+  const previous = word.start > 0 ? joinedRows[word.start - 1] : null;
+  const firstId = getWordHistoryNumericId(first);
+  const previousId = getWordHistoryNumericId(previous);
+
+  if (!first) return "missing-word-initial";
+  if (!isWordHistoryBoundaryChar(previous?.character)) return "no-preceding-boundary";
+  if (firstId == null) return "missing-source-id";
+  if (previous && previousId === firstId) return "same-edit-as-boundary";
+  if (previous && previousId != null && firstId === previousId + 1 && isWordHistorySingleCharacterInsertion(first)) {
+    return "typed-after-boundary";
+  }
+  if (!previous && isWordHistorySingleCharacterInsertionAt(first, word.start)) return "typed-after-start-boundary";
+  if (previous && previousId != null && firstId > previousId + 1 && isWordHistorySingleCharacterInsertion(first)) {
+    return "inserted-after-boundary-later";
+  }
+  return "not-boundary-timed";
+}
+
+function classifyWordHistoryInitialEdgeProvenance(joinedRows, word) {
+  const first = joinedRows[word.start];
+  const next = word.start + 1 < word.end ? joinedRows[word.start + 1] : null;
+  const firstId = getWordHistoryNumericId(first);
+  const nextId = getWordHistoryNumericId(next);
+
+  if (!first) return "missing-word-initial";
+  if (firstId == null) return "missing-source-id";
+  if (next && nextId != null && nextId === firstId + 1 && isWordHistorySingleCharacterInsertion(first)) return "simple-initial";
+  if (getWordHistoryNumericValue(first.dk_prefixLength) === word.start && isWordHistorySingleCharacterInsertion(first)) {
+    if (next && nextId != null && nextId !== firstId + 1) return "inserted-initial-later";
+    return "simple-initial";
+  }
+  if (getWordHistoryNumericValue(first.dk_prefixLength) === word.start) return "nonsingle-initial-edit";
+  if (next && nextId != null && firstId !== nextId - 1) return "revised-initial-context";
+  return "nonconsecutive-initial";
+}
+
+function classifyWordHistoryFinalBoundaryTiming(joinedRows, word) {
+  const last = joinedRows[word.end - 1];
+  const next = word.end < joinedRows.length ? joinedRows[word.end] : null;
+  const lastId = getWordHistoryNumericId(last);
+  const nextId = getWordHistoryNumericId(next);
+
+  if (!last) return "missing-word-final";
+  if (!next) return "end-of-text";
+  if (!isWordHistoryBoundaryChar(next.character)) return "no-following-boundary";
+  if (lastId == null) return "missing-source-id";
+  if (nextId === lastId) return "same-edit-as-boundary";
+  if (nextId != null && nextId === lastId + 1 && isWordHistorySingleCharacterInsertion(next)) {
+    return "typed-before-boundary";
+  }
+  if (nextId != null && nextId > lastId + 1 && isWordHistorySingleCharacterInsertion(next)) {
+    return "boundary-inserted-later";
+  }
+  if (nextId != null && nextId < lastId && isWordHistorySingleCharacterInsertion(last)) {
+    return "inserted-before-boundary-later";
+  }
+  return "not-boundary-timed";
+}
+
+function classifyWordHistoryFinalEdgeProvenance(joinedRows, word) {
+  const last = joinedRows[word.end - 1];
+  const previous = word.end - 2 >= word.start ? joinedRows[word.end - 2] : null;
+  const lastId = getWordHistoryNumericId(last);
+  const previousId = getWordHistoryNumericId(previous);
+
+  if (!last) return "missing-word-final";
+  if (lastId == null) return "missing-source-id";
+  if (previous && previousId != null && lastId !== previousId + 1 && isWordHistorySingleCharacterInsertion(last)) {
+    return "inserted-final-later";
+  }
+  if (isWordHistorySingleCharacterInsertion(last)) return "simple-final";
+  if (getWordHistoryNumericValue(last.dk_prefixLength) === word.end - 1) return "nonsingle-final-edit";
+  if (previous && previousId != null && lastId !== previousId + 1) return "revised-final-context";
+  return "nonconsecutive-final";
+}
+
+function getWordHistoryBoundaryPair(left, right) {
+  const leftId = getWordHistoryNumericId(left);
+  const rightId = getWordHistoryNumericId(right);
+  return `[${leftId == null ? "-" : leftId}/${rightId == null ? "-" : rightId}]`;
+}
+
+function getWordHistoryLongestConsecutiveRunLength(ids) {
+  const sortedIds = [...new Set(ids.filter((id) => id != null))].sort((a, b) => a - b);
+  let longest = 0;
+  let current = 0;
+  let previous = null;
+
+  for (const id of sortedIds) {
+    current = previous != null && id === previous + 1 ? current + 1 : 1;
+    if (current > longest) longest = current;
+    previous = id;
+  }
+
+  return longest;
+}
+
+function buildWordHistoryEventRows(records = {}) {
+  const dkRows = buildDiffKeysRows(records);
+  const charList = [];
+  const editEvents = [];
+  let nextCharId = 1;
+
+  for (const row of dkRows) {
+    const start = Math.max(0, Math.min(Number(row.prefixLength) || 0, charList.length));
+    const deleteCount = String(row.removed || "").length;
+    const beforeChar = start > 0 ? charList[start - 1] : null;
+    const afterChar = start + deleteCount < charList.length ? charList[start + deleteCount] : null;
+    const removedChars = charList.slice(start, start + deleteCount);
+    const insertedChars = Array.from(String(row.inserted || "")).map((char) => ({
+      id: nextCharId++,
+      char,
+      createdByDkId: row.id,
+      finalPosition: null,
+      finalWordIndex: null
+    }));
+
+    charList.splice(start, deleteCount, ...insertedChars);
+    editEvents.push({ row, beforeChar, afterChar, removedChars, insertedChars });
+  }
+
+  const finalText = charList.map((item) => item.char).join("");
+  const words = [];
+  const re = /[^\s]+/gu;
+  let match;
+  while ((match = re.exec(finalText)) !== null) {
+    words.push({
+      wordIndex: words.length + 1,
+      word: match[0],
+      start: match.index,
+      end: match.index + match[0].length,
+      eventIds: new Set()
+    });
+  }
+
+  const wordByIndex = new Map(words.map((word) => [word.wordIndex, word]));
+  for (let pos = 0; pos < charList.length; pos++) {
+    const char = charList[pos];
+    char.finalPosition = pos;
+    const word = words.find((item) => pos >= item.start && pos < item.end);
+    if (word) {
+      char.finalWordIndex = word.wordIndex;
+      word.eventIds.add(char.createdByDkId);
+    }
+  }
+
+  for (const event of editEvents) {
+    const targetWordIndexes = new Set();
+    event.insertedChars.forEach((char) => {
+      if (char.finalWordIndex) targetWordIndexes.add(char.finalWordIndex);
+    });
+    if (event.removedChars.length > 0) {
+      if (event.beforeChar?.finalWordIndex) targetWordIndexes.add(event.beforeChar.finalWordIndex);
+      if (event.afterChar?.finalWordIndex) targetWordIndexes.add(event.afterChar.finalWordIndex);
+    }
+    targetWordIndexes.forEach((wordIndex) => {
+      const word = wordByIndex.get(wordIndex);
+      if (!word) return;
+      word.eventIds.add(event.row.id);
+      event.removedChars.forEach((removed) => {
+        if (removed.createdByDkId) word.eventIds.add(removed.createdByDkId);
+      });
+    });
+  }
+
+  return words.map((word) => ({
+    wordIndex: word.wordIndex,
+    eventIds: [...word.eventIds].sort((a, b) => a - b)
+  }));
+}
+
+function calculateWordHistoryPurity(word, historyWord, joined) {
+  const finalSourceIds = joined
+    .slice(word.start, word.end)
+    .map((row) => getWordHistoryNumericId(row))
+    .filter((id) => id != null);
+  const historyEventIds = new Set((historyWord?.eventIds || []).filter((id) => Number.isFinite(Number(id))).map(Number));
+  const finalSourceIdSet = new Set(finalSourceIds);
+  const extraHistoryEvents = [...historyEventIds].filter((id) => !finalSourceIdSet.has(id)).length;
+  const mainRunLength = getWordHistoryLongestConsecutiveRunLength(finalSourceIds);
+  const extraFinalSourceEvents = Math.max(0, finalSourceIds.length - mainRunLength);
+  return extraHistoryEvents + extraFinalSourceEvents;
+}
+
+function buildWordHistoryRows(records = {}) {
+  const joined = joinWordHistoryFinalTextAndDiffKeys(records);
+  const words = getWordHistoryFinalWordsFromJoined(joined);
+  const historyRows = buildWordHistoryEventRows(records);
+  const historyByIndex = new Map(historyRows.map((word) => [word.wordIndex, word]));
+
+  return words.map((word) => {
+    const first = joined[word.start];
+    const last = joined[word.end - 1];
+    const previous = word.start > 0 ? joined[word.start - 1] : null;
+    const next = word.end < joined.length ? joined[word.end] : null;
+    return {
+      index: word.index,
+      word: word.word,
+      wordPurity: calculateWordHistoryPurity(word, historyByIndex.get(word.index), joined),
+      wordInitialTimeSincePrev: first?.timeSincePrev ?? "",
+      wordInitialTextDataIndexPair: getWordHistoryBoundaryPair(previous, first),
+      wordInitialBoundaryTiming: classifyWordHistoryInitialBoundaryTiming(joined, word),
+      wordInitialEdgeProvenance: classifyWordHistoryInitialEdgeProvenance(joined, word),
+      wordFinalTimeUntilNext: last?.timeUntilNext ?? "",
+      wordFinalTextDataIndexPair: getWordHistoryBoundaryPair(last, next),
+      wordFinalBoundaryTiming: classifyWordHistoryFinalBoundaryTiming(joined, word),
+      wordFinalEdgeProvenance: classifyWordHistoryFinalEdgeProvenance(joined, word)
+    };
+  });
+}
+
+function renderWordHistoryPane(records = null) {
+  const target = document.getElementById("wordHistoryOutput");
+  if (!target) return;
+  const source = records || {
+    header_records: header_record || {},
+    text_records: text_record || {},
+    key_records: key_record || {}
+  };
+  const rows = buildWordHistoryRows(source);
+  if (!rows.length) {
+    target.innerHTML = '<div class="word-history-empty">No final words available.</div>';
+    return;
+  }
+
+  const body = rows.map((row) => `
+    <tr>
+      <td>${row.index}</td>
+      <td class="word-history-word">${escapeDiffKeysHtml(row.word)}</td>
+      <td>${row.wordPurity}</td>
+      <td>${escapeDiffKeysHtml(row.wordInitialTimeSincePrev)}</td>
+      <td>${escapeDiffKeysHtml(row.wordInitialTextDataIndexPair)}</td>
+      <td>${escapeDiffKeysHtml(row.wordInitialBoundaryTiming)}</td>
+      <td>${escapeDiffKeysHtml(row.wordInitialEdgeProvenance)}</td>
+      <td>${escapeDiffKeysHtml(row.wordFinalTimeUntilNext)}</td>
+      <td>${escapeDiffKeysHtml(row.wordFinalTextDataIndexPair)}</td>
+      <td>${escapeDiffKeysHtml(row.wordFinalBoundaryTiming)}</td>
+      <td>${escapeDiffKeysHtml(row.wordFinalEdgeProvenance)}</td>
+    </tr>
+  `).join("");
+
+  target.innerHTML = `
+    <table class="word-history-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>word</th>
+          <th>purity</th>
+          <th>initial timeSincePrev</th>
+          <th>initial ids</th>
+          <th>initial timing</th>
+          <th>initial provenance</th>
+          <th>final timeUntilNext</th>
+          <th>final ids</th>
+          <th>final timing</th>
+          <th>final provenance</th>
         </tr>
       </thead>
       <tbody>${body}</tbody>
@@ -287,6 +714,7 @@ function applyWebScriptLogRecords(records, key = '') {
 
   makeRevisionTable();
   renderDiffKeysPane();
+  renderWordHistoryPane();
   window.dashboardEvents?.emit?.("log:loaded", {
     key,
     text_records: Object.keys(text_record || {}).length
@@ -661,6 +1089,8 @@ async function loadFromListbox() {
   messages.scrollTop = messages.scrollHeight;
 
   makeRevisionTable();
+  renderDiffKeysPane();
+  renderWordHistoryPane();
   window.dashboardEvents?.emit?.("log:loaded", {
     key,
     text_records: Object.keys(text_record || {}).length
@@ -672,6 +1102,7 @@ async function loadGridFromListbox() {
   processGraphFormat();
   showWritingScore();
   renderDiffKeysPane();
+  renderWordHistoryPane();
   makeFTAnalysis();
 }
 

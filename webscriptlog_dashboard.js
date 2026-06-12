@@ -29,7 +29,7 @@ function registerDashboardModule(moduleDef) {
 
 function getDefaultDashboardLayout() {
   return {
-    version: 3,
+    version: 4,
     columns: 2,
     rowHeight: 420,
     slots: [
@@ -38,6 +38,7 @@ function getDefaultDashboardLayout() {
       { id: "slot-score", module: "writingScore", spanX: 1, spanY: 1 },
       { id: "slot-graph", module: "processGraph", spanX: 1, spanY: 1 },
       { id: "slot-diffkeys", module: "diffKeys", spanX: 2, spanY: 1 },
+      { id: "slot-word-history", module: "wordHistory", spanX: 2, spanY: 1 },
       { id: "slot-controls", module: "playbackControls", spanX: 2, spanY: 1 },
       { id: "slot-idfx-csv", module: "idfxCsv", spanX: 2, spanY: 1 }
     ]
@@ -60,8 +61,11 @@ function normalizeDashboardLayout(layout) {
   if (layoutVersion < 3 && !slots.some((slot) => slot?.module === "diffKeys")) {
     slots.push({ id: "slot-diffkeys", module: "diffKeys", spanX: 2, spanY: 1 });
   }
+  if (layoutVersion < 4 && !slots.some((slot) => slot?.module === "wordHistory")) {
+    slots.push({ id: "slot-word-history", module: "wordHistory", spanX: 2, spanY: 1 });
+  }
   return {
-    version: 3,
+    version: 4,
     columns: Math.max(1, Math.min(2, Number(layout.columns) || fallback.columns)),
     rowHeight: Number(layout.rowHeight) || fallback.rowHeight,
     slots: slots
@@ -187,6 +191,17 @@ function registerDefaultDashboardModules() {
     },
     refresh() {
       if (hasDashboardRecordData() && typeof renderDiffKeysPane === "function") renderDiffKeysPane();
+    }
+  });
+
+  registerDashboardModule({
+    id: "wordHistory",
+    title: "Word History",
+    getNode() {
+      return getBankedModuleNode("wordHistory");
+    },
+    refresh() {
+      if (hasDashboardRecordData() && typeof renderWordHistoryPane === "function") renderWordHistoryPane();
     }
   });
 

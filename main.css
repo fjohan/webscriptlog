@@ -952,6 +952,47 @@ body[data-layout="classic"] #playback{
   border-color: #fecaca;
 }
 
+.word-history-host,
+.word-history-output{
+  min-height: 0;
+  overflow: auto;
+}
+
+.word-history-table{
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .92rem;
+}
+
+.word-history-table th,
+.word-history-table td{
+  border-bottom: 1px solid var(--border);
+  padding: 6px 8px;
+  vertical-align: top;
+  text-align: left;
+}
+
+.word-history-table th{
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+}
+
+.word-history-word{
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.word-history-detail{
+  max-width: 520px;
+  white-space: pre-wrap;
+}
+
+.word-history-empty{
+  color: var(--muted);
+}
+
 .mobile-notes-app .sl_button{
   width: auto;
   min-width: 180px;
