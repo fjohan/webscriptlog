@@ -3043,6 +3043,56 @@ function replayFast() {
   replayStart(0.1);
 }
 
+function getReplayTextEditEntries() {
+  return getSortedRecordEntries(text_record || {})
+    .filter((entry) => Number.isFinite(entry.ts));
+}
+
+function getReplayCurrentTextTimestamp() {
+  const logicalTs = getCurrentReplayLogicalTimestamp();
+  const state = resolveReplayStateAtTimestamp(logicalTs, 'inclusive');
+  return Number.isFinite(Number(state.textTs)) ? Number(state.textTs) : null;
+}
+
+function replayStepEditForward() {
+  const entries = getReplayTextEditEntries();
+  if (!entries.length) return;
+
+  const currentTextTs = getReplayCurrentTextTimestamp();
+  const next = entries.find((entry) => currentTextTs == null || entry.ts > currentTextTs);
+  if (next) setReplayStartTimestamp(next.ts, 'inclusive');
+}
+
+function replayStepEditBackward() {
+  const entries = getReplayTextEditEntries();
+  if (!entries.length) return;
+
+  const currentTextTs = getReplayCurrentTextTimestamp();
+  if (currentTextTs == null) return;
+
+  let previous = null;
+  for (const entry of entries) {
+    if (entry.ts < currentTextTs) previous = entry;
+    else break;
+  }
+
+  if (previous) {
+    setReplayStartTimestamp(previous.ts, 'inclusive');
+    return;
+  }
+
+  const startTs = Number(header_record?.starttime);
+  if (Number.isFinite(startTs)) setReplayStartTimestamp(startTs, 'before');
+}
+
+function replayGoToEnd() {
+  const endTs = Number(header_record?.endtime);
+  const entries = getReplayTextEditEntries();
+  const fallbackTs = entries.length ? entries[entries.length - 1].ts : Number(header_record?.starttime);
+  const targetTs = Number.isFinite(endTs) ? endTs : fallbackTs;
+  if (Number.isFinite(targetTs)) setReplayStartTimestamp(targetTs, 'inclusive');
+}
+
 let replayState = {
   active: false,
   paused: false,
@@ -3506,7 +3556,7 @@ function syncReplayCursorMode(position = getReplayCaretPosition()) {
 }
 
 function getCurrentReplayLogicalTimestamp() {
-  if (replayState.currentTs != null && replayState.paused) return replayState.currentTs;
+  if (replayState.currentTs != null && (replayState.paused || !replayState.active)) return replayState.currentTs;
   if (!replayState.active) return Number(groupTime) > -1 ? Number(groupTime) : Number(header_record?.starttime) || 0;
   const elapsed = Date.now() - replayState.startedAt;
   return replayState.mark + (elapsed / Math.max(Number(replayState.speedup) || 1, 0.0001));

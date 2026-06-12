@@ -17,6 +17,9 @@ const UI = [
     ["REPLAY",              "b_replay",       replayNormal],
     ["FAST_FORWARD",        "b_fastforward",  replayFast],
     ["PAUSE",               "b_reppause",     replayPauseToggle],
+    ["EDIT_BACK",           "b_repeditback",  replayStepEditBackward],
+    ["EDIT_FORWARD",        "b_repeditforward", replayStepEditForward],
+    ["GO_TO_END",           "b_repend",       replayGoToEnd],
     ["STOP",                "b_repstop",      replayStop],
     ["FETCH",               "b_fetch",        fetchFromStorage],
     ["FETCH_PLUS",          "b_fetchplus",    fetchPlusFromStorage],
@@ -220,7 +223,7 @@ function initUI() {
 
   moveButtonsTo("div_fetch", ["b_fetch","b_fetchplus","b_fetchtozip","b_fetchfttozip","b_fetchstatstozip","b_fetchstatstoxlsx","b_fetchidfxtozip","b_fetchwritingscoretozip"]);
 
-  moveButtonsTo("replayTransportControls", ["b_replay", "b_fastforward", "b_reppause", "b_repstop"]);
+  moveButtonsTo("replayTransportControls", ["b_replay", "b_fastforward", "b_reppause", "b_repeditback", "b_repeditforward", "b_repend", "b_repstop"]);
 
   layoutButtonsInRows(buttonBarByTab.get("REPLAY"), [
     ["b_loadgrid"],
