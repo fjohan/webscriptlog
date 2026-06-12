@@ -620,8 +620,7 @@ function calculateWordHistoryPurity(word, historyWord, joined) {
   return extraHistoryEvents + extraFinalSourceEvents;
 }
 
-function buildWordHistoryRows(records = {}) {
-  const joined = joinWordHistoryFinalTextAndDiffKeys(records);
+function getWordHistoryRowsFromJoined(records = {}, joined = []) {
   const words = getWordHistoryFinalWordsFromJoined(joined);
   const historyRows = buildWordHistoryEventRows(records);
   const historyByIndex = new Map(historyRows.map((word) => [word.wordIndex, word]));
@@ -634,6 +633,8 @@ function buildWordHistoryRows(records = {}) {
     return {
       index: word.index,
       word: word.word,
+      start: word.start,
+      end: word.end,
       wordPurity: calculateWordHistoryPurity(word, historyByIndex.get(word.index), joined),
       wordInitialTimeSincePrev: first?.timeSincePrev ?? "",
       wordInitialTextDataIndexPair: getWordHistoryBoundaryPair(previous, first),
@@ -644,6 +645,46 @@ function buildWordHistoryRows(records = {}) {
       wordFinalBoundaryTiming: classifyWordHistoryFinalBoundaryTiming(joined, word),
       wordFinalEdgeProvenance: classifyWordHistoryFinalEdgeProvenance(joined, word)
     };
+  });
+}
+
+function buildWordHistoryRows(records = {}) {
+  const joined = joinWordHistoryFinalTextAndDiffKeys(records);
+  return getWordHistoryRowsFromJoined(records, joined);
+}
+
+function getFinalTextAnalysisPurityColor(purity) {
+  const value = Math.max(0, Math.min(8, Number(purity) || 0));
+  const hue = Math.round(132 - (value / 8) * 132);
+  const alpha = value === 0 ? 0.16 : 0.24 + (value / 8) * 0.34;
+  return `hsla(${hue}, 88%, 52%, ${alpha.toFixed(2)})`;
+}
+
+function applyFinalTextAnalysisPurityColors(contentDiv, records = {}) {
+  if (!contentDiv) return;
+  const spans = Array.from(contentDiv.querySelectorAll('span[time-bef][time-aft]'));
+  if (!spans.length || typeof buildWordHistoryRows !== 'function') return;
+
+  let rows = [];
+  try {
+    rows = buildWordHistoryRows(records);
+  } catch (err) {
+    console.warn('Could not calculate word purity for Final Text Analysis.', err);
+    return;
+  }
+
+  rows.forEach((row) => {
+    const color = getFinalTextAnalysisPurityColor(row.wordPurity);
+    for (let i = row.start; i < row.end && i < spans.length; i++) {
+      const span = spans[i];
+      span.classList.add('fta-purity-char');
+      if (i === row.start) span.classList.add('fta-purity-word-start');
+      if (i === row.end - 1) span.classList.add('fta-purity-word-end');
+      span.dataset.wordIndex = row.index;
+      span.dataset.wordPurity = row.wordPurity;
+      span.style.backgroundColor = color;
+      span.title = `${row.word}: purity ${row.wordPurity}`;
+    }
   });
 }
 
@@ -1595,6 +1636,12 @@ function makeFTAnalysis() {
     contentDiv.appendChild(span);
   });
 
+  applyFinalTextAnalysisPurityColors(contentDiv, {
+    header_records: header_record || {},
+    text_records: text_record || {},
+    key_records: key_record || {}
+  });
+
   // test that reconstructed text match final text
   tmp_keys = Object.keys(ftr);
   if (reconstructedText == ftr[tmp_keys[tmp_keys.length-1]]) {
@@ -1618,7 +1665,8 @@ function makeFTAnalysis() {
     const span = e.target.closest('#content span[time-bef][time-aft]');
     if (!span) return;
     //labelDiv.textContent = `B: ${span.getAttribute("time-bef")} A: ${span.getAttribute("time-aft")}`;
-    labelDiv.textContent = `B: ${span.getAttribute('time-bef')} A: ${span.getAttribute('time-aft')} C: ${span.getAttribute('data-cumulative')}`;
+    const purity = span.dataset.wordPurity;
+    labelDiv.textContent = `B: ${span.getAttribute('time-bef')} A: ${span.getAttribute('time-aft')} C: ${span.getAttribute('data-cumulative')}${purity != null ? ` P: ${purity}` : ''}`;
 
   });
 
