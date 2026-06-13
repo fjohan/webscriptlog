@@ -1,5 +1,7 @@
 # Word History
 
+*NOTE: this is an AI draft and incomplete*
+
 Word History is currently a word-level analysis of the final text. It joins Final Text Analysis character provenance with DiffKeys rows using:
 
 `finalTextCharacter.textDataIndex === diffKeys.id`
@@ -207,4 +209,4 @@ Includes `u -> y` correction plus punctuation trials before final comma:
 
 `wordPurity = 10`
 
-The score is not yet linguistically weighted. Insertions, deletions, and replacements all count through the same simple event logic. Future versions could separate number of insertions, deletions, replacements, locality, and whether the edits were consecutive.
+Note: the score is *not* linguistically weighted or motivated. Insertions, deletions, and replacements all count through the same simple event logic. Future versions could separate number of insertions, deletions, replacements, locality, and whether the edits were consecutive.
