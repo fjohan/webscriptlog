@@ -6,7 +6,7 @@ Included:
 
 - main browser app: `index.html`, `main.css`, runtime JS files
 - dashboard, replay, linear/writing-score, emulator, batch ZIP exporters
-- active IDFX converter: `dist/webscriptlog_format_converters.js`
+- active IDFX converter: `panes/idfx/webscriptlog_format_converters.js`
 - DiffKeys Direct converter: `diffkeys-direct-recorder/converter.js`
 - browser dependencies: `ext_js/`, `helpers_js/`
 - PHP endpoints used by the app: `php/`
