@@ -264,6 +264,11 @@
       return;
     }
 
+    if (target.selectionStart !== target.selectionEnd) {
+      caret.style.display = 'none';
+      return;
+    }
+
     const pos = Math.max(0, Math.min(Number(target.selectionEnd) || 0, String(target.value || '').length));
     const coords = mobileNotesGetTextareaCaretCoordinates(target, pos);
     if (!coords) {
@@ -281,10 +286,9 @@
     if (!target) return;
     requestAnimationFrame(() => {
       const pos = Math.max(0, Math.min(Number(target.selectionEnd) || 0, String(target.value || '').length));
-      try {
-        target.setSelectionRange(target.selectionStart, target.selectionEnd);
-      } catch (err) {
-        // Ignore browsers that temporarily reject selection updates.
+      if (target.selectionStart !== target.selectionEnd) {
+        mobileNotesUpdateCaretOverlay(target);
+        return;
       }
 
       const coords = mobileNotesGetTextareaCaretCoordinates(target, pos);
@@ -310,6 +314,10 @@
         mobileNotesUpdateCaretOverlay(target);
       }
     });
+  }
+
+  function mobileNotesRefreshCaretOverlaySoon(target) {
+    requestAnimationFrame(() => mobileNotesUpdateCaretOverlay(target));
   }
 
   function mobileNotesHandleScroll(event) {
@@ -470,9 +478,9 @@
       editor.addEventListener('mousedown', (event) => mobileNotesHandlePointerRecord('mousedown', event.currentTarget));
       editor.addEventListener('mouseup', (event) => mobileNotesHandlePointerRecord('mouseup', event.currentTarget));
       editor.addEventListener('input', mobileNotesHandleInput);
-      editor.addEventListener('click', (event) => mobileNotesEnsureEditorCaretVisible(event.currentTarget));
+      editor.addEventListener('click', (event) => mobileNotesRefreshCaretOverlaySoon(event.currentTarget));
       editor.addEventListener('keyup', (event) => mobileNotesEnsureEditorCaretVisible(event.currentTarget));
-      editor.addEventListener('select', (event) => mobileNotesEnsureEditorCaretVisible(event.currentTarget));
+      editor.addEventListener('select', (event) => mobileNotesRefreshCaretOverlaySoon(event.currentTarget));
       editor.addEventListener('focus', (event) => mobileNotesEnsureEditorCaretVisible(event.currentTarget));
       editor.addEventListener('blur', () => mobileNotesUpdateCaretOverlay(null));
       editor.addEventListener('scroll', mobileNotesHandleScroll);
