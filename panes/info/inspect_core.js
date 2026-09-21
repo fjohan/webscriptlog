@@ -120,7 +120,51 @@
     return String(text || "").split(/\s+/).filter((token) => token.length > 0).length;
   }
 
-  function getCumulativeMetricsAt(boundaryTs, textEvents, textTimes, pauseEvents) {
+  function getMedian(values) {
+    const sorted = values
+      .map(Number)
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+    if (!sorted.length) return null;
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  }
+
+  function getLowercaseWordTransitions(records) {
+    const rows = root.WebScriptLogAnalysisCore?.buildDiffKeysRows
+      ? root.WebScriptLogAnalysisCore.buildDiffKeysRows(records)
+      : [];
+    return rows
+      .filter((row) => row.lowercaseWordTransition && Number.isFinite(Number(row.lowercaseWordTransitionMs)))
+      .map((row) => ({
+        ts: Number(row.keydownTimestamp),
+        duration_ms: Number(row.lowercaseWordTransitionMs),
+        id: row.id
+      }))
+      .filter((event) => Number.isFinite(event.ts) && Number.isFinite(event.duration_ms));
+  }
+
+  function getTransitionMetricsAt(boundaryTs, transitionEvents) {
+    const durations = transitionEvents
+      .filter((event) => event.ts <= boundaryTs)
+      .map((event) => event.duration_ms);
+    return {
+      transition_count_total: durations.length,
+      transition_time_total: getMedian(durations)
+    };
+  }
+
+  function getTransitionIntervalMetrics(startTs, endTs, transitionEvents) {
+    const durations = transitionEvents
+      .filter((event) => event.ts > startTs && event.ts <= endTs)
+      .map((event) => event.duration_ms);
+    return {
+      transition_count_interval: durations.length,
+      transition_time_interval: getMedian(durations)
+    };
+  }
+
+  function getCumulativeMetricsAt(boundaryTs, textEvents, textTimes, pauseEvents, transitionEvents = []) {
     let processChars = 0;
     let insertionsTotal = 0;
     let deletionsTotal = 0;
@@ -145,6 +189,8 @@
 
     const currentText = getLatestTextAtOrBefore(boundaryTs, textEvents, textTimes);
 
+    const transitionMetrics = getTransitionMetricsAt(boundaryTs, transitionEvents);
+
     return {
       process_chars_total: processChars,
       word_count_total: countProcessWords(currentText),
@@ -152,7 +198,8 @@
       insertions_total: insertionsTotal,
       replacements_total: replacementsTotal,
       pause_time_total_s: pauseTime,
-      pause_count_total: pauseCount
+      pause_count_total: pauseCount,
+      ...transitionMetrics
     };
   }
 
@@ -291,6 +338,7 @@
     const keyEvents = sortedEntries(normalizedRecords.key_records);
     const textTimes = textEvents.map((ev) => ev.ts);
     const finalText = textEvents.length ? textEvents[textEvents.length - 1].text : "";
+    const transitionEvents = getLowercaseWordTransitions(normalizedRecords);
 
     const typingBounds = getTypingBounds(keyEvents);
     const typingStart = typingBounds.firstKeydown ?? startTime;
@@ -315,7 +363,7 @@
     const windowBaseline = hasWindowRecords ? getWindowInteractionMetricsAt(basisStart, startTime, normalizedRecords.window_records) : null;
 
     const cumulativeRows = boundaries.map((boundaryTs, index) => {
-      const cumulative = getCumulativeMetricsAt(boundaryTs, textEvents, textTimes, pauseEvents);
+      const cumulative = getCumulativeMetricsAt(boundaryTs, textEvents, textTimes, pauseEvents, transitionEvents);
       const windowCumulative = hasWindowRecords
         ? subtractWindowMetrics(getWindowInteractionMetricsAt(boundaryTs, startTime, normalizedRecords.window_records), windowBaseline)
         : null;
@@ -331,8 +379,10 @@
 
     const intervalRows = cumulativeRows.map((row, index) => {
       const prev = index === 0 ? null : cumulativeRows[index - 1];
-      const intervalDurationMin = Math.max(0, (row.boundaryTs - (prev ? prev.boundaryTs : basisStart)) / 60000);
+      const intervalStartTs = prev ? prev.boundaryTs : basisStart;
+      const intervalDurationMin = Math.max(0, (row.boundaryTs - intervalStartTs) / 60000);
       const processInterval = row.process_chars_total - (prev ? prev.process_chars_total : 0);
+      const transitionInterval = getTransitionIntervalMetrics(intervalStartTs, row.boundaryTs, transitionEvents);
       return {
         interval: row.interval,
         start_s: row.start_s,
@@ -350,6 +400,10 @@
         pause_time_interval_s: row.pause_time_total_s - (prev ? prev.pause_time_total_s : 0),
         pause_count_total: row.pause_count_total,
         pause_count_interval: row.pause_count_total - (prev ? prev.pause_count_total : 0),
+        transition_count_total: row.transition_count_total,
+        transition_count_interval: transitionInterval.transition_count_interval,
+        transition_time_total: row.transition_time_total,
+        transition_time_interval: transitionInterval.transition_time_interval,
         ...(hasWindowRecords ? {
           window_total: row.window,
           window: subtractWindowMetrics(row.window, prev ? prev.window : null)
@@ -358,7 +412,7 @@
     });
 
     const basisDurationMin = Math.max(0, (basisEnd - basisStart) / 60000);
-    const overallCounts = getCumulativeMetricsAt(basisEnd, textEvents, textTimes, pauseEvents);
+    const overallCounts = getCumulativeMetricsAt(basisEnd, textEvents, textTimes, pauseEvents, transitionEvents);
     const overallWindow = hasWindowRecords
       ? subtractWindowMetrics(getWindowInteractionMetricsAt(basisEnd, startTime, normalizedRecords.window_records), windowBaseline)
       : null;
@@ -381,6 +435,8 @@
         replacements_total: overallCounts.replacements_total,
         pause_time_total_s: overallCounts.pause_time_total_s,
         pause_count_total: overallCounts.pause_count_total,
+        transition_count_total: overallCounts.transition_count_total,
+        transition_time_total: overallCounts.transition_time_total,
         ...(hasWindowRecords ? { window: overallWindow } : {})
       },
       intervals: intervalRows
@@ -432,7 +488,9 @@
     lines.push(`replacements_total\t${summary.overall?.replacements_total ?? 0}`);
     lines.push(`pause_count_total\t${summary.overall?.pause_count_total ?? 0}`);
     lines.push(`pause_time_total_s\t${formatNumber(summary.overall?.pause_time_total_s)}`);
-    lines.push("interval\tstart_s\tend_s\tspeed_chars_per_min\tword_count_total\tword_count_interval\tinsertions_interval\tdeletions_interval\treplacements_interval\tpause_count_interval\tpause_time_interval_s");
+    lines.push(`transition_count_total\t${summary.overall?.transition_count_total ?? 0}`);
+    lines.push(`transition_time_total\t${formatNumber(summary.overall?.transition_time_total)}`);
+    lines.push("interval\tstart_s\tend_s\tspeed_chars_per_min\tword_count_total\tword_count_interval\tinsertions_interval\tdeletions_interval\treplacements_interval\tpause_count_interval\tpause_time_interval_s\ttransition_count_interval\ttransition_time_interval");
     for (const row of summary.intervals || []) {
       lines.push([
         row.interval,
@@ -445,7 +503,9 @@
         row.deletions_interval,
         row.replacements_interval,
         row.pause_count_interval,
-        formatNumber(row.pause_time_interval_s)
+        formatNumber(row.pause_time_interval_s),
+        row.transition_count_interval,
+        formatNumber(row.transition_time_interval)
       ].join("\t"));
     }
     lines.push("</inspect-metrics>");
@@ -461,6 +521,8 @@
     getIntervalBoundaries,
     getLatestTextAtOrBefore,
     countProcessWords,
+    getMedian,
+    getLowercaseWordTransitions,
     getCumulativeMetricsAt,
     getWindowInteractionMetricsAt,
     subtractWindowMetrics,

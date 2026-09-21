@@ -564,7 +564,7 @@ function serializeInspectMetrics(summary) {
   lines.push(`recording_time_s\t${summary.options.recording_time_s.toFixed(3)}`);
   lines.push(`typing_time_s\t${summary.options.typing_time_s.toFixed(3)}`);
   lines.push('overall');
-  lines.push('speed_chars_per_min\tword_count_total\tdeletions_total\tinsertions_total\treplacements_total\tpause_time_total_s\tpause_count_total');
+  lines.push('speed_chars_per_min\tword_count_total\tdeletions_total\tinsertions_total\treplacements_total\tpause_time_total_s\tpause_count_total\ttransition_count_total\ttransition_time_total');
   lines.push([
     summary.overall.speed_chars_per_min.toFixed(3),
     summary.overall.word_count_total,
@@ -572,7 +572,9 @@ function serializeInspectMetrics(summary) {
     summary.overall.insertions_total,
     summary.overall.replacements_total,
     summary.overall.pause_time_total_s.toFixed(3),
-    summary.overall.pause_count_total
+    summary.overall.pause_count_total,
+    summary.overall.transition_count_total ?? 0,
+    Number.isFinite(Number(summary.overall.transition_time_total)) ? Number(summary.overall.transition_time_total).toFixed(3) : ''
   ].join('\t'));
   if (summary.has_window_records) {
     lines.push('window_overall');
@@ -594,7 +596,7 @@ function serializeInspectMetrics(summary) {
     ].join('\t'));
   }
   lines.push('intervals');
-  lines.push('interval\tstart_s\tend_s\tspeed_chars_per_min\tword_count_total\tword_count_interval\tdeletions_total\tdeletions_interval\tinsertions_total\tinsertions_interval\treplacements_total\treplacements_interval\tpause_time_total_s\tpause_time_interval_s\tpause_count_total\tpause_count_interval');
+  lines.push('interval\tstart_s\tend_s\tspeed_chars_per_min\tword_count_total\tword_count_interval\tdeletions_total\tdeletions_interval\tinsertions_total\tinsertions_interval\treplacements_total\treplacements_interval\tpause_time_total_s\tpause_time_interval_s\tpause_count_total\tpause_count_interval\ttransition_count_total\ttransition_count_interval\ttransition_time_total\ttransition_time_interval');
 
   for (let i = 0; i < summary.intervals.length; i++) {
     const row = summary.intervals[i];
@@ -614,7 +616,11 @@ function serializeInspectMetrics(summary) {
       row.pause_time_total_s.toFixed(3),
       row.pause_time_interval_s.toFixed(3),
       row.pause_count_total,
-      row.pause_count_interval
+      row.pause_count_interval,
+      row.transition_count_total ?? 0,
+      row.transition_count_interval ?? 0,
+      Number.isFinite(Number(row.transition_time_total)) ? Number(row.transition_time_total).toFixed(3) : '',
+      Number.isFinite(Number(row.transition_time_interval)) ? Number(row.transition_time_interval).toFixed(3) : ''
     ].join('\t'));
   }
   if (summary.has_window_records) {

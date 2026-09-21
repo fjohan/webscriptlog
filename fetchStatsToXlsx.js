@@ -232,6 +232,8 @@ function buildSummaryRow(key, user, published_on, summary) {
     replacements_total: summary.overall.replacements_total,
     pause_time_total_s: summary.overall.pause_time_total_s,
     pause_count_total: summary.overall.pause_count_total,
+    transition_count_total: summary.overall.transition_count_total ?? 0,
+    transition_time_total: summary.overall.transition_time_total ?? '',
     has_window_records: summary.has_window_records ? 1 : 0
   };
 
@@ -264,7 +266,11 @@ function buildIntervalRows(key, user, published_on, summary) {
     pause_time_total_s: row.pause_time_total_s,
     pause_time_interval_s: row.pause_time_interval_s,
     pause_count_total: row.pause_count_total,
-    pause_count_interval: row.pause_count_interval
+    pause_count_interval: row.pause_count_interval,
+    transition_count_total: row.transition_count_total ?? 0,
+    transition_count_interval: row.transition_count_interval ?? 0,
+    transition_time_total: row.transition_time_total ?? '',
+    transition_time_interval: row.transition_time_interval ?? ''
   }));
 }
 
@@ -325,7 +331,9 @@ function buildDetailedSheetRows(entry) {
     'insertions_total',
     'replacements_total',
     'pause_time_total_s',
-    'pause_count_total'
+    'pause_count_total',
+    'transition_count_total',
+    'transition_time_total'
   ]);
   rows.push([
     summary.overall.speed_chars_per_min,
@@ -334,7 +342,9 @@ function buildDetailedSheetRows(entry) {
     summary.overall.insertions_total,
     summary.overall.replacements_total,
     summary.overall.pause_time_total_s,
-    summary.overall.pause_count_total
+    summary.overall.pause_count_total,
+    summary.overall.transition_count_total ?? 0,
+    summary.overall.transition_time_total ?? ''
   ]);
 
   if (summary.has_window_records) {
@@ -365,7 +375,11 @@ function buildDetailedSheetRows(entry) {
       row.pause_time_total_s,
       row.pause_time_interval_s,
       row.pause_count_total,
-      row.pause_count_interval
+      row.pause_count_interval,
+      row.transition_count_total ?? 0,
+      row.transition_count_interval ?? 0,
+      row.transition_time_total ?? '',
+      row.transition_time_interval ?? ''
     ]);
   }
 
@@ -614,6 +628,8 @@ const SUMMARY_HEADERS = [
   'replacements_total',
   'pause_time_total_s',
   'pause_count_total',
+  'transition_count_total',
+  'transition_time_total',
   'has_window_records',
   ...WINDOW_OVERALL_HEADERS
 ];
@@ -637,7 +653,11 @@ const INTERVAL_HEADERS = [
   'pause_time_total_s',
   'pause_time_interval_s',
   'pause_count_total',
-  'pause_count_interval'
+  'pause_count_interval',
+  'transition_count_total',
+  'transition_count_interval',
+  'transition_time_total',
+  'transition_time_interval'
 ];
 
 const WINDOW_INTERVAL_HEADERS = [

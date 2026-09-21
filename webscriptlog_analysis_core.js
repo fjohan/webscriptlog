@@ -61,6 +61,29 @@
     return null;
   }
 
+  function singleLowercaseLetter(value) {
+    const chars = Array.from(String(value ?? ""));
+    return chars.length === 1 && /^\p{Ll}$/u.test(chars[0]) ? chars[0] : "";
+  }
+
+  function isLowercaseWordTransition(previousRow, currentRow) {
+    if (!previousRow || !currentRow) return false;
+    if (previousRow.removed || currentRow.removed) return false;
+
+    const previousInserted = singleLowercaseLetter(previousRow.inserted);
+    const currentInserted = singleLowercaseLetter(currentRow.inserted);
+    if (!previousInserted || !currentInserted) return false;
+
+    const previousPosition = Number(previousRow.prefixLength);
+    const currentPosition = Number(currentRow.prefixLength);
+    if (!Number.isFinite(previousPosition) || !Number.isFinite(currentPosition)) return false;
+    if (currentPosition !== previousPosition + previousInserted.length) return false;
+
+    return Number.isFinite(previousRow.keydownTimestamp) &&
+      Number.isFinite(currentRow.keydownTimestamp) &&
+      currentRow.keydownTimestamp >= previousRow.keydownTimestamp;
+  }
+
   function buildDiffKeysRows(records = {}) {
     const normalized = recordUtils.normalizeRecords(records);
     const textEntries = sortedEntries(normalized.text_records);
@@ -82,11 +105,13 @@
       const keydownValue = keyValueFromRaw(precedingKeydown?.value, "keydown: ");
       const keyupValue = keyValueFromRaw(matchingKeyup?.value, "keyup: ");
 
-      rows.push({
+      const row = {
         id: i + 1,
         textDataTimestamp: entry.ts,
         prefixLength: span.prefixLength,
         totalLength: currentText.length,
+        keydownTimestamp: precedingKeydown?.ts ?? null,
+        keyupTimestamp: matchingKeyup?.ts ?? null,
         keydownTime: formatSeconds(precedingKeydown?.ts, startTime),
         keyupTime: formatSeconds(matchingKeyup?.ts, startTime),
         keydownValue,
@@ -94,8 +119,17 @@
         keyMatch: precedingKeydown ? (matchingKeyup ? "matched" : "missing-keyup") : "missing-keydown",
         changedText: changedTextFromSpan(span),
         removed: span.removed,
-        inserted: span.inserted
-      });
+        inserted: span.inserted,
+        lowercaseWordTransition: false,
+        lowercaseWordTransitionMs: null
+      };
+
+      if (isLowercaseWordTransition(rows[rows.length - 1], row)) {
+        row.lowercaseWordTransition = true;
+        row.lowercaseWordTransitionMs = row.keydownTimestamp - rows[rows.length - 1].keydownTimestamp;
+      }
+
+      rows.push(row);
 
       previousText = currentText;
     }

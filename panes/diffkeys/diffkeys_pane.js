@@ -20,6 +20,22 @@
     };
   }
 
+  function getMedian(values) {
+    const sorted = values
+      .map(Number)
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+    if (!sorted.length) return null;
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2
+      ? sorted[middle]
+      : (sorted[middle - 1] + sorted[middle]) / 2;
+  }
+
+  function formatMilliseconds(value) {
+    return Number.isFinite(Number(value)) ? Number(value).toFixed(0) : "";
+  }
+
   function renderDiffKeysPane(records = null) {
     const target = document.getElementById("diffKeysOutput");
     if (!target) return;
@@ -41,9 +57,23 @@
         <td>${escapeHtml(row.keydownValue)}</td>
         <td>${escapeHtml(row.keyupValue)}</td>
         <td>${escapeHtml(row.keyMatch)}</td>
+        <td>${escapeHtml(formatMilliseconds(row.lowercaseWordTransitionMs))}</td>
         <td class="diff-keys-text">${escapeHtml(row.changedText)}</td>
       </tr>
     `).join("");
+
+    const lowercaseWordTransitions = rows
+      .filter((row) => row.lowercaseWordTransition)
+      .map((row) => row.lowercaseWordTransitionMs)
+      .filter(Number.isFinite);
+    const medianLowercaseWordTransition = getMedian(lowercaseWordTransitions);
+    const transitionStats = `
+      <div class="diff-keys-stats">
+        <strong>Lowercase in-word transitions:</strong>
+        n=${lowercaseWordTransitions.length};
+        median=${medianLowercaseWordTransition == null ? "n/a" : `${formatMilliseconds(medianLowercaseWordTransition)} ms`}
+      </div>
+    `;
 
     target.innerHTML = `
       <table class="diff-keys-table">
@@ -57,11 +87,13 @@
             <th>keydown value</th>
             <th>keyup value</th>
             <th>key match</th>
+            <th>lc word transition ms</th>
             <th>text changed</th>
           </tr>
         </thead>
         <tbody>${body}</tbody>
       </table>
+      ${transitionStats}
     `;
   }
 
