@@ -39,6 +39,11 @@ if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
 <script type="text/javascript" src="webscriptlog_dashboard.js"></script>
 <script type="text/javascript" src="diffkeys-direct-recorder/converter.js"></script>
 <script type="text/javascript" src="panes/idfx/webscriptlog_format_converters.js"></script>
+<script type="text/javascript" src="panes/conversions/conversion_core.js"></script>
+<script type="text/javascript" src="panes/conversions/webscriptlog_codec.js"></script>
+<script type="text/javascript" src="panes/conversions/idfx_codec.js"></script>
+<script type="text/javascript" src="panes/conversions/conversions.js"></script>
+<script type="text/javascript" src="panes/conversions/conversions_pane.js"></script>
 <script type="text/javascript" src="ui.js"></script>
 <!--script type="text/javascript" src="viz.js"></script-->
 <script type="text/javascript" src="helpers_js/idbStore.js"></script>
@@ -295,6 +300,32 @@ if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
               </select>
               <label for="pauseCrit" data-i18n="label.pauseCriteria"></label>
               <input type="number" id="pauseCrit" value="0.300" min="0" max="30" step="0.1">
+            </div>
+          </div>
+        </div>
+
+        <div data-dashboard-module="conversions">
+          <div id="conversionsModule" class="conversions-pane">
+            <div class="conversions-controls">
+              <input data-conversion="files" type="file" accept=".json,.txt,.log,.idfx,.xml" multiple aria-label="Conversion input files">
+              <button class="sl_button" data-conversion="current" type="button">Use current recording</button>
+              <label>From <select data-conversion="from">
+                <option value="auto">Auto detect</option>
+                <option value="json">ScriptLogLite JSON</option><option value="raw">ScriptLogLite raw</option>
+                <option value="webscriptlog">WebScriptLog</option><option value="idfx">Inputlog IDFX</option>
+              </select></label>
+              <label>To <select data-conversion="to">
+                <option value="json">ScriptLogLite JSON</option><option value="raw">ScriptLogLite raw</option>
+                <option value="webscriptlog">WebScriptLog</option><option value="idfx">Inputlog IDFX</option>
+              </select></label>
+              <label><input data-conversion="replace" type="checkbox" checked>Export insertions as replace</label>
+              <label><input data-conversion="labels" type="checkbox" checked>IDFX metadata extensions</label>
+              <button class="sl_button" data-conversion="convert" type="button" disabled>Convert</button>
+              <button class="sl_button" data-conversion="download" type="button" disabled>Download results</button>
+            </div>
+            <p data-conversion="status" role="status" aria-live="polite">Choose files or use the current recording.</p>
+            <div class="conversions-table-scroll">
+              <table><thead><tr><th>Input</th><th>Format</th><th>Output</th><th>Result</th><th></th></tr></thead><tbody data-conversion="results"></tbody></table>
             </div>
           </div>
         </div>

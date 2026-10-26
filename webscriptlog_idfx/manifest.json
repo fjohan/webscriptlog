@@ -1,0 +1,66 @@
+{
+  "sid": "hkr_vj_100_admin",
+  "transport": "php",
+  "url": null,
+  "start": 100,
+  "end": 5,
+  "format": "idfx",
+  "files": 5,
+  "entries": [
+    {
+      "index": "0100",
+      "published_on": "2025-09-11 09:20:48",
+      "user": "hkr_vj_100-000224",
+      "compressed_bytes": 16079,
+      "text_records": 520,
+      "key_records": 1046,
+      "output_bytes": 204582,
+      "key": "0100_hkr_vj_100-000224_2025-09-11 09:20:48",
+      "file": "0100_hkr_vj_100-000224_2025-09-11_09-20-48_webscriptlog.idfx"
+    },
+    {
+      "index": "0101",
+      "published_on": "2025-09-11 09:21:58",
+      "user": "hkr_vj_100-000223",
+      "compressed_bytes": 36958,
+      "text_records": 1166,
+      "key_records": 2331,
+      "output_bytes": 454901,
+      "key": "0101_hkr_vj_100-000223_2025-09-11 09:21:58",
+      "file": "0101_hkr_vj_100-000223_2025-09-11_09-21-58_webscriptlog.idfx"
+    },
+    {
+      "index": "0102",
+      "published_on": "2025-09-11 09:22:16",
+      "user": "hkr_vj_100-000220",
+      "compressed_bytes": 19099,
+      "text_records": 603,
+      "key_records": 1200,
+      "output_bytes": 224937,
+      "key": "0102_hkr_vj_100-000220_2025-09-11 09:22:16",
+      "file": "0102_hkr_vj_100-000220_2025-09-11_09-22-16_webscriptlog.idfx"
+    },
+    {
+      "index": "0103",
+      "published_on": "2025-09-11 09:22:47",
+      "user": "hkr_vj_100-000270",
+      "compressed_bytes": 13434,
+      "text_records": 415,
+      "key_records": 835,
+      "output_bytes": 156439,
+      "key": "0103_hkr_vj_100-000270_2025-09-11 09:22:47",
+      "file": "0103_hkr_vj_100-000270_2025-09-11_09-22-47_webscriptlog.idfx"
+    },
+    {
+      "index": "0104",
+      "published_on": "2025-09-11 09:23:32",
+      "user": "hkr_vj_100-000243",
+      "compressed_bytes": 29182,
+      "text_records": 895,
+      "key_records": 1814,
+      "output_bytes": 343069,
+      "key": "0104_hkr_vj_100-000243_2025-09-11 09:23:32",
+      "file": "0104_hkr_vj_100-000243_2025-09-11_09-23-32_webscriptlog.idfx"
+    }
+  ]
+}

@@ -29,7 +29,7 @@ function registerDashboardModule(moduleDef) {
 
 function getDefaultDashboardLayout() {
   return {
-    version: 4,
+    version: 5,
     columns: 2,
     rowHeight: 420,
     slots: [
@@ -40,7 +40,8 @@ function getDefaultDashboardLayout() {
       { id: "slot-diffkeys", module: "diffKeys", spanX: 2, spanY: 1 },
       { id: "slot-word-history", module: "wordHistory", spanX: 2, spanY: 1 },
       { id: "slot-controls", module: "playbackControls", spanX: 2, spanY: 1 },
-      { id: "slot-idfx-csv", module: "idfxCsv", spanX: 2, spanY: 1 }
+      { id: "slot-idfx-csv", module: "idfxCsv", spanX: 2, spanY: 1 },
+      { id: "slot-conversions", module: "conversions", spanX: 2, spanY: 1 }
     ]
   };
 }
@@ -64,8 +65,11 @@ function normalizeDashboardLayout(layout) {
   if (layoutVersion < 4 && !slots.some((slot) => slot?.module === "wordHistory")) {
     slots.push({ id: "slot-word-history", module: "wordHistory", spanX: 2, spanY: 1 });
   }
+  if (layoutVersion < 5 && !slots.some((slot) => slot?.module === "conversions")) {
+    slots.push({ id: "slot-conversions", module: "conversions", spanX: 2, spanY: 1 });
+  }
   return {
-    version: 4,
+    version: 5,
     columns: Math.max(1, Math.min(2, Number(layout.columns) || fallback.columns)),
     rowHeight: Number(layout.rowHeight) || fallback.rowHeight,
     slots: slots
@@ -248,6 +252,13 @@ function registerDefaultDashboardModules() {
     title: "IDFX",
     getNode() {
       return getBankedModuleNode("idfxCsv");
+    }
+  });
+  registerDashboardModule({
+    id: "conversions",
+    title: "Conversions",
+    getNode() {
+      return window.ConversionsPane.mount(getBankedModuleNode("conversions"));
     }
   });
 }
